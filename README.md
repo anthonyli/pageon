@@ -4,6 +4,10 @@
 
 A local HTML editor with a portable editing runtime. Open a file, convert it through the PageOn API, edit its text and download an HTML copy that remains editable.
 
+[![PageOn official website — English homepage](assets/screenshots/home-en.png)](https://pageon.cc/)
+
+*The [PageOn website](https://pageon.cc/). Run the open-source editor locally with the steps below.*
+
 **No sign-in, payments, API key or database setup is required.** The application starts locally; conversion of uploaded files uses a remote service. The bundled example works without that service.
 
 The interface defaults to English. Use the **language icon + 中 / EN** button in the header to switch the home screen, editor and exported toolbar to Chinese. Your choice is remembered in this browser when storage is available. Switching languages keeps the current draft and does not translate the document content.
