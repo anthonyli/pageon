@@ -1,0 +1,11 @@
+{
+  "name": "@pageon/protocol",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/public.js",
+    "./public": "./src/public.js"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,14 @@
+{
+  "name": "@pageon/runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/runtime.js",
+    "./deck-edit": "./src/deck-edit.js",
+    "./artifact-html": "./src/artifact-html.js",
+    "./preview-html": "./src/preview-html.js",
+    "./edit-styles": "./src/edit-styles.js"
+  },
+  "license": "MIT"
+}

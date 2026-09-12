@@ -1,0 +1,25 @@
+{
+  "name": "pageon",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0",
+    "npm": ">=10"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "vite --config apps/playground/vite.config.mjs",
+    "build": "vite build --config apps/playground/vite.config.mjs && node scripts/build-runtime.mjs",
+    "build:runtime": "node scripts/build-runtime.mjs",
+    "preview": "vite preview --config apps/playground/vite.config.mjs",
+    "test": "node --test tests/public/*.test.mjs"
+  },
+  "devDependencies": {
+    "linkedom": "^0.18.5"
+  },
+  "license": "MIT"
+}

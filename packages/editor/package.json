@@ -1,0 +1,23 @@
+{
+  "name": "@pageon/editor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/Editor.jsx",
+    "./preview": "./src/PreviewFrame.jsx",
+    "./styles.css": "./src/styles.css",
+    "./messages": "./src/messages.js",
+    "./demo-html": "./src/demo-html.js"
+  },
+  "dependencies": {
+    "@pageon/ui": "*",
+    "@pageon/runtime": "*",
+    "lucide-react": "^1.40.0"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "license": "MIT"
+}

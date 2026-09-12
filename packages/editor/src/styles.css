@@ -1,0 +1,10 @@
+/* 编辑器画布：灰色点阵背景（保留） */
+.canvas-grid {
+  background-color: #e8eeec;
+  background-image: radial-gradient(rgba(21, 111, 99, 0.15) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+.dark .canvas-grid {
+  background-color: #061a1d;
+  background-image: radial-gradient(rgba(53, 187, 167, 0.12) 1px, transparent 1px);
+}
