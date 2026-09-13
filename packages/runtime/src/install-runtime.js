@@ -62,7 +62,7 @@ host.setAttribute('data-tier',isPremium?'premium':'free');
 const shadow=host.attachShadow({mode:'closed'});
   host.setAttribute('data-artifact-no-edit','');
 const style=document.createElement('style');
-style.textContent=':host{position:fixed;right:18px;bottom:18px;z-index:2147483647;display:block;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.bar{display:flex;flex-wrap:wrap;max-width:calc(100vw - 32px);box-sizing:border-box;align-items:center;gap:7px;padding:8px;border:1px solid rgba(255,255,255,.12);border-radius:12px;background:rgba(7,26,29,.96);box-shadow:0 16px 45px rgba(7,26,29,.28);color:#fff;font-size:12px;backdrop-filter:blur(12px)}button{border:0;border-radius:8px;padding:8px 10px;background:#fff;color:#071a1d;font:700 12px/1 inherit;cursor:pointer}button:first-of-type{background:#1f9d8b;color:#fff}.drag-handle{cursor:grab;touch-action:none;user-select:none;padding:8px 4px;color:#8edbcd;font-size:20px;line-height:1}.drag-handle:active{cursor:grabbing}.drag-handle:focus-visible{outline:2px solid #8edbcd;border-radius:4px}a{color:#8edbcd;text-decoration:none;font-weight:700;padding:0 4px;white-space:nowrap}';
+style.textContent=config.floatingStyle;
 const bar=document.createElement('div');
 bar.className='bar';
 const editButton=document.createElement('button');

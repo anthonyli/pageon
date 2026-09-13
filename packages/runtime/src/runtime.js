@@ -1,6 +1,6 @@
 import { createDeckEditSession } from "./deck-edit.js";
 import { MIT_LICENSE } from "./license.js";
-import { RUNTIME_EDIT_STYLE } from "./edit-styles.js";
+import { RUNTIME_EDIT_STYLE, FLOATING_TOOLBAR_STYLE } from "./edit-styles.js";
 import { installRuntime } from "./install-runtime.js";
 
 export const RUNTIME_VERSION = "0.2.1";
@@ -31,7 +31,7 @@ function labels(lang) {
 function options({ fileName = "document.html", lang = "en", temporaryEdits = false, ui = "floating", shortcuts = true } = {}) {
   if (!["floating", "sidebar", false].includes(ui)) throw new TypeError("invalid-runtime-ui");
   return { fileName: String(fileName), homeUrl: BRAND_URL, temporaryEdits: Boolean(temporaryEdits),
-    ui, editStyle: RUNTIME_EDIT_STYLE, shortcuts: Boolean(shortcuts), text: labels(lang), version: RUNTIME_VERSION };
+    ui, editStyle: RUNTIME_EDIT_STYLE, floatingStyle: FLOATING_TOOLBAR_STYLE, shortcuts: Boolean(shortcuts), text: labels(lang), version: RUNTIME_VERSION };
 }
 
 /** Self-contained browser script. Brand URL and attribution are not configurable. */
