@@ -7,3 +7,7 @@ The editor uses React, React DOM, Radix UI primitives, class-variance-authority,
 The local Button, Tabs and DropdownMenu wrappers follow shadcn/ui composition patterns. Preserve applicable upstream notices when redistributing derived code. The sample HTML is original PageOn demonstration content covered by the repository's MIT License; it does not include paid templates, user uploads or production documents.
 
 PageOn's private conversion service, accounts, billing implementation and paid templates are not included in this distribution or licensed by its LICENSE file. MIT permission to use and modify this software does not imply PageOn endorsement of a fork or rights to represent it as the official service.
+
+## html-to-image
+
+Offline PNG/PDF rendering uses html-to-image 1.11.13 (MIT). Its full license is retained in the generated Runtime script. Source: https://github.com/bubkoo/html-to-image

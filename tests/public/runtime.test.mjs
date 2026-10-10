@@ -94,6 +94,8 @@ test("sidebar and floating toolbars support pointer dragging, keyboard movement 
     handle.setPointerCapture = id => { captured = id; };
     handle.hasPointerCapture = id => captured === id;
     handle.releasePointerCapture = () => { captured = null; };
+    host.style.left = '600px'; host.style.top = '100px';
+    page.shadow.querySelector('.bar').getBoundingClientRect = () => ({ width: 180, height: 150 });
     host.getBoundingClientRect = () => ({ left: parseFloat(host.style.left) || 600, top: parseFloat(host.style.top) || 100, width: 180, height: 150 });
     const pointer = (type, x, y) => {
       const event = new page.document.defaultView.Event(type, { bubbles: true, cancelable: true });
@@ -124,4 +126,62 @@ test("standalone runtime and saved copies retain the full MIT notice and officia
   assert.ok(reopened.controller.serialize().html.includes(MIT_LICENSE));
   assert.equal(reopened.shadow.querySelector("a").getAttribute("href"), "https://pageon.cc");
   page.controller.destroy(); reopened.controller.destroy();
+});
+
+test("image export can be excluded without losing offline text editing or saved copies", async () => {
+  const enabledSource = createRuntimeCode();
+  const disabledSource = createRuntimeCode({ imageExport: false });
+  assert.match(disabledSource, /"imageExport":false/);
+  assert.doesNotMatch(disabledSource, /html-to-image/);
+  assert.ok(disabledSource.length < enabledSource.length / 2, "omit the renderer, not just its controls");
+  for (const ui of ["floating", "sidebar", false]) {
+    const page = openRuntime(ui, undefined, { imageExport: false, lang: "zh" });
+    let reopened;
+    try {
+      assert.equal(page.controller.exportImage, undefined);
+      assert.equal(page.controller.exportPdf, undefined);
+      assert.doesNotMatch([...page.shadow.querySelectorAll("button")].map(button => button.textContent).join(" "), /导出图片|导出 PDF|Export image|Export PDF/);
+      assert.equal(page.shadow.querySelector('.file-status[aria-live="polite"]').hidden, true, 'save feedback is available without image export');
+      page.controller.enterEdit();
+      const nodeId = page.document.querySelector("h1").getAttribute("data-artifact-local-node");
+      page.controller.apply({ type: "set-text", nodeId, value: "Still editable offline" });
+      await page.controller.save();
+      assert.doesNotMatch(page.saved(), /html-to-image/);
+      reopened = openRuntime(ui, page.saved());
+      assert.equal(reopened.document.querySelector("h1").textContent, "Still editable offline");
+      assert.equal(reopened.controller.exportPdf, undefined);
+      assert.equal(reopened.shadow.querySelector("a").getAttribute("href"), "https://pageon.cc");
+      reopened.controller.enterEdit();
+      assert.ok(reopened.document.querySelector("h1").hasAttribute("contenteditable"));
+    } finally { page.controller.destroy(); reopened?.controller.destroy(); }
+  }
+});
+
+test("direct runtime mounts honor the image export capability and serialize it", async () => {
+  const { document } = parseHTML('<html><head></head><body><h1>Trusted document</h1></body></html>');
+  let saved;
+  const runtime = createRuntime({ document, ui: false, imageExport: false, onSave: artifact => { saved = artifact.html; } });
+  try {
+    assert.equal(runtime.exportImage, undefined);
+    assert.equal(runtime.exportPdf, undefined);
+    await runtime.save();
+    assert.match(saved, /"imageExport":false/);
+    assert.doesNotMatch(saved, /html-to-image/);
+    assert.equal(parseHTML(saved).document.querySelectorAll("#pageon-local-runtime-script").length, 1);
+  } finally { runtime.destroy(); }
+});
+
+test("enabled runtime copies keep image and PDF controls when reopened offline", () => {
+  const page = openRuntime("floating", undefined, { imageExport: true });
+  let reopened;
+  try {
+    const html = page.controller.serialize().html;
+    assert.match(html, /html-to-image/);
+    reopened = openRuntime("floating", html);
+    assert.equal(typeof reopened.controller.exportImage, "function");
+    assert.equal(typeof reopened.controller.exportPdf, "function");
+    const buttons = [...reopened.shadow.querySelectorAll("button")].map(button => button.textContent);
+    assert.ok(buttons.includes("Export image"));
+    assert.ok(buttons.includes("Export PDF"));
+  } finally { page.controller.destroy(); reopened?.controller.destroy(); }
 });

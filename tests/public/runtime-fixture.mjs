@@ -2,7 +2,7 @@ import vm from "node:vm";
 import { parseHTML } from "linkedom";
 import { createRuntimeCode } from "@pageon/runtime";
 
-export function openRuntime(ui = "floating", html = '<html><head></head><body><h1>Hello</h1><p>World</p></body></html>', extra = {}) {
+export function openRuntime(ui = "floating", html = '<html><head></head><body><h1>Hello</h1><p>World</p></body></html>', extra = {}, windowOptions = {}) {
   const { document, window } = parseHTML(html);
   let shadow;
   let saved;
@@ -13,7 +13,7 @@ export function openRuntime(ui = "floating", html = '<html><head></head><body><h
     if (tag === "a") node.click = () => {};
     return node;
   };
-  const isolatedWindow = { addEventListener() {}, removeEventListener() {}, innerWidth: 1000, innerHeight: 800 };
+  const isolatedWindow = { addEventListener() {}, removeEventListener() {}, innerWidth: 1000, innerHeight: 800, ...windowOptions };
   const script = document.querySelector("#pageon-local-runtime-script") || document.createElement("script");
   const source = script.textContent || createRuntimeCode({ fileName: "sample.html", ui, ...extra });
   script.id = "pageon-local-runtime-script"; script.textContent = source; document.body.appendChild(script);

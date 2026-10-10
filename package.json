@@ -16,9 +16,11 @@
     "build": "vite build --config apps/playground/vite.config.mjs && node scripts/build-runtime.mjs",
     "build:runtime": "node scripts/build-runtime.mjs",
     "preview": "vite preview --config apps/playground/vite.config.mjs",
-    "test": "node --test tests/public/*.test.mjs"
+    "test": "node --test tests/public/*.test.mjs tests/*.test.mjs"
   },
   "devDependencies": {
+    "esbuild": "0.25.12",
+    "jsdom": "^30.1.2",
     "linkedom": "^0.18.5"
   },
   "license": "MIT"

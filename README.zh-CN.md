@@ -62,11 +62,13 @@ runtime.exitEdit();
 await runtime.save();
 ```
 
-`ui` 支持 `floating`、`sidebar`、`false`。`false` 只隐藏默认编辑按钮，品牌仍保留。控制器提供 `enterEdit`、`exitEdit`、`getSelection`、`apply`、`serialize`、`save`、`on` 和 `destroy`；导出文件中也可通过 `window.PageOnRuntime` 使用。`Ctrl+Alt+E` 切换编辑，`Ctrl+Alt+S` 保存副本。
+`ui` 支持 `floating`、`sidebar`、`false`。`false` 只隐藏默认编辑按钮，品牌仍保留。控制器提供 `enterEdit`、`exitEdit`、`getSelection`、`apply`、`serialize`、`save`、`saveCopy`、`on` 和 `destroy`；导出文件中也可通过 `window.PageOnRuntime` 使用。`Ctrl+Alt+E` 切换编辑，`Ctrl+S`、`Cmd+S` 或 `Ctrl+Alt+S` 保存。
+
+支持文件写入的浏览器显示“保存”：首次弹出保存窗口并自动带入当前文件名，在原文件夹中确认同名覆盖后，本次页面会话内再次保存直接写回该文件，不再弹出文件选择或覆盖确认。双击打开 HTML 本身不授予写入权限，刷新或重新打开后需要再次确认保存位置。取消或写入失败不会自动下载副本。不支持的浏览器显示“保存副本”。“导出”菜单保留“另存副本”，启用图片导出时还包含“导出图片”和“导出 PDF”；`saveCopy()` 始终请求单独下载 HTML。
 
 `apply({ type: 'set-text', nodeId, value })` 用于纯文字节点，不会覆盖包含子元素的复杂结构。节点 ID 只在本次编辑会话中稳定。`serialize()` 同步返回 `{ html, fileName, runtimeVersion }`；`save()` 返回 Promise，防止同一实例重复执行保存。
 
-`onSave(artifact)` 可替换当前宿主的保存方式，但闭包和回调不会自动写进下载文件；下载文件默认仍使用本地保存。需要自包含的定制控件时参考根目录的 `examples/custom-controls.html`。控件容器标记 `data-pageon-extension`，避免被识别成可编辑正文；保存时清除临时控件，重新打开时由其脚本重建。
+`onSave(artifact)` 可替换当前宿主的 `save()` 行为，但闭包和回调不会自动写进下载文件；下载文件默认使用文件选择授权或下载副本。需要自包含的定制控件时参考根目录的 `examples/custom-controls.html`。控件容器标记 `data-pageon-extension`，避免被识别成可编辑正文；保存时清除临时控件，重新打开时由其脚本重建。
 
 Runtime 使用自包含函数生成单文件脚本，项目提供的构建不压缩这些函数。更换构建工具时，需要验证生成并保存的 HTML 能继续运行。
 

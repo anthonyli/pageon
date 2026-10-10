@@ -316,7 +316,7 @@ export default function Editor({
             </div>
             <div className="flex justify-between py-2">
               <span className="text-muted-foreground">{t("建议大小")}</span>
-              <span className="font-medium">≤ 2 MB</span>
+              <span className="font-medium">≤ 10 MB</span>
             </div>
           </div>
           <p className="mt-2 border-t pt-2 text-xs leading-relaxed text-muted-foreground">

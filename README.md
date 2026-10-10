@@ -69,11 +69,13 @@ runtime.exitEdit();
 await runtime.save();
 ```
 
-`ui: false` hides the built-in editing buttons, not the brand. The controller exposes `enterEdit`, `exitEdit`, `getSelection`, `apply`, `serialize`, `save`, `on` and `destroy`. The controller is also available as `window.PageOnRuntime` in exported files. `Ctrl+Alt+E` toggles editing; `Ctrl+Alt+S` saves a copy.
+`ui: false` hides the built-in editing buttons, not the brand. The controller exposes `enterEdit`, `exitEdit`, `getSelection`, `apply`, `serialize`, `save`, `saveCopy`, `on` and `destroy`. The controller is also available as `window.PageOnRuntime` in exported files. `Ctrl+Alt+E` toggles editing; `Ctrl+S`, `Cmd+S` and `Ctrl+Alt+S` save.
+
+In supported browsers, **Save** opens a save dialog prefilled with the current file name. Confirm replacement in the original folder once; subsequent saves write to that destination for the current page session without reopening the picker or replacement confirmation. Opening a local HTML file alone does not grant write access; reloading or reopening requires confirming the destination again. A cancelled or failed write never silently downloads a replacement. Unsupported browsers show **Save copy**. The **Export** menu contains **Save a copy**, **Export image** and **Export PDF** when visual export is enabled; `saveCopy()` always requests a separate HTML download.
 
 `apply({ type: 'set-text', nodeId, value })` edits a selected plain-text node. It rejects structured nodes with child elements so links and formatting are not silently replaced. The node ID is stable within an editing session, not a universal ID across arbitrary document rewrites. `serialize()` synchronously returns `{ html, fileName, runtimeVersion }`. `save()` uses a single-flight guard and returns a Promise.
 
-An optional `onSave(artifact)` callback changes the host's storage behavior for the current session. JavaScript closures and host callbacks are not serialized into downloaded files; those files use the default local download behavior. Use the `examples/custom-controls.html` example for self-contained custom controls. Mark their UI container with `data-pageon-extension` so it is not editable; such temporary UI is removed from saved copies and recreated by its own script.
+An optional `onSave(artifact)` callback changes the host's `save()` behavior for the current session. JavaScript closures and host callbacks are not serialized into downloaded files; those files use the default file-selection or copy-download behavior. Use the `examples/custom-controls.html` example for self-contained custom controls. Mark their UI container with `data-pageon-extension` so it is not editable; such temporary UI is removed from saved copies and recreated by its own script.
 
 The Runtime factory serializes self-contained functions. The provided build preserves these functions without minification. Custom bundlers must preserve this behavior and test the actual saved HTML, not only the application bundle.
 

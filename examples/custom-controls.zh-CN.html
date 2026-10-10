@@ -42,7 +42,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
-(function installRuntime(config, createDeckEditSession, document, window, fallbackSource = '') {
+(function installRuntime(config, createDeckEditSession, document, window, fallbackSource = '', createFloatingToolbar, createVisualExporter, createFileSaver, createExportMenu) {
 const Node = window.Node || globalThis.Node;
 const MutationObserver = window.MutationObserver || globalThis.MutationObserver;
 const getComputedStyle = window.getComputedStyle?.bind(window) || globalThis.getComputedStyle;
@@ -108,9 +108,11 @@ const style=document.createElement('style');
 style.textContent=config.floatingStyle;
 const bar=document.createElement('div');
 bar.className='bar';
+bar.setAttribute('role','toolbar');
 const editButton=document.createElement('button');
 editButton.type='button';
 editButton.textContent=TEXT.edit;
+editButton.className='edit-button';
 const saveButton=document.createElement('button');
 saveButton.type='button';
 saveButton.textContent=TEXT.save;
@@ -123,6 +125,7 @@ dragHandle.title=TEXT.move;
 dragHandle.textContent='⠿';
 bar.append(dragHandle,editButton,saveButton);
 const brand=document.createElement('a');
+brand.className='brand';
 brand.href=config.homeUrl;
 brand.target='_blank';
 brand.rel='noreferrer';
@@ -157,49 +160,14 @@ if(config.ui==='sidebar'){
 if(config.ui===false){editButton.hidden=true;saveButton.hidden=true;dragHandle.hidden=true;}
 shadow.append(style,bar);
 
-let drag=null;
-let moved=false;
-const positionToolbar=(left,top)=>{
-  const rect=host.getBoundingClientRect();
-  const x=Math.max(8,Math.min(left,window.innerWidth-rect.width-8));
-  const y=Math.max(8,Math.min(top,window.innerHeight-rect.height-8));
-  host.style.left=x+'px';
-  host.style.top=y+'px';
-  host.style.right='auto';
-  host.style.bottom='auto';
-  moved=true;
-};
-listen(dragHandle,'pointerdown',event=>{
-  if(event.button!==0||event.isPrimary===false)return;
-  event.preventDefault();
-  const rect=host.getBoundingClientRect();
-  drag={id:event.pointerId,x:event.clientX,y:event.clientY,left:rect.left,top:rect.top};
-  dragHandle.setPointerCapture(event.pointerId);
-});
-listen(dragHandle,'pointermove',event=>{
-  if(!drag||event.pointerId!==drag.id)return;
-  event.preventDefault();
-  positionToolbar(drag.left+event.clientX-drag.x,drag.top+event.clientY-drag.y);
-});
-const finishDrag=event=>{
-  if(!drag||event.pointerId!==drag.id)return;
-  drag=null;
-  if(dragHandle.hasPointerCapture(event.pointerId))dragHandle.releasePointerCapture(event.pointerId);
-};
-['pointerup','pointercancel','lostpointercapture'].forEach(type=>listen(dragHandle,type,finishDrag));
-listen(dragHandle,'click',event=>event.preventDefault());
-listen(dragHandle,'keydown',event=>{
-  const delta={ArrowLeft:[-20,0],ArrowRight:[20,0],ArrowUp:[0,-20],ArrowDown:[0,20]}[event.key];
-  if(!delta)return;
-  event.preventDefault();
-  const rect=host.getBoundingClientRect();
-  positionToolbar(rect.left+delta[0],rect.top+delta[1]);
-});
-listen(window,'resize',()=>{
-  if(!moved)return;
-  const rect=host.getBoundingClientRect();
-  positionToolbar(rect.left,rect.top);
-});
+let floating;
+let exportMenu;
+const status=document.createElement('span');
+status.className='file-status';status.setAttribute('role','status');status.setAttribute('aria-live','polite');status.hidden=true;
+bar.append(status);
+const reportStatus=message=>{if(destroyed)return;status.textContent=message;status.hidden=false;floating?.refresh();};
+const fileSaver=createFileSaver({window,lang:TEXT.edit==='编辑'?'zh':'en',fileName:config.fileName,isDestroyed:()=>destroyed,onStatus:reportStatus});
+if(fileSaver.canSave&&!config.onSave){saveButton.textContent=fileSaver.labels.save;saveButton.title=fileSaver.labels.choose;}
 
 const ensureMounted=()=>{
   if(destroyed)return;
@@ -224,6 +192,7 @@ const ensureMounted=()=>{
 
 const setEditing=value=>{
   if(destroyed)return;
+  exportMenu?.close();
   selected=null;
   if(document.activeElement?.isContentEditable)document.activeElement.blur();
   editing=value;
@@ -245,13 +214,11 @@ const setEditing=value=>{
     deckEdit.exit();
   }
   editButton.textContent=value?TEXT.done:TEXT.edit;
+  floating?.setEditing(value);
   emit('modechange',value?'edit':'browse');
   if(value&&editingNotice&&!noticeDismissed){
     editingNotice.hidden=false;
-    if(moved){
-      const rect=host.getBoundingClientRect();
-      positionToolbar(rect.left,rect.top);
-    }
+    floating?.refresh();
   }
 };
 
@@ -274,25 +241,62 @@ const serialize = () => {
     return { html, fileName: config.fileName.replace(/\.html?$/i,'')+'-edited.html', runtimeVersion: config.version };
   } finally { if(wasEditing)setEditing(true); }
 };
-const save = () => {
+const save = (copy = false) => {
   if(saving || destroyed)return Promise.resolve();
   saving=true;
+  saveButton.disabled=true;
+  const finish=()=>{saving=false;saveButton.disabled=false;};
+  const failed=error=>{reportStatus(fileSaver.labels.failed);throw error;};
   try {
-    const artifact=serialize();
-    if(config.onSave){
-      return Promise.resolve(config.onSave(artifact)).finally(()=>{saving=false;});
+    if(config.onSave&&!copy){
+      return Promise.resolve(config.onSave(serialize())).catch(failed).finally(finish);
     }
+    if(!copy&&fileSaver.canSave){
+      return fileSaver.save(serialize).catch(failed).finally(finish);
+    }
+    const artifact=serialize();
     const blob=new Blob([artifact.html],{type:'text/html;charset=utf-8'});
     const link=document.createElement('a');
     link.href=URL.createObjectURL(blob);
     link.download=artifact.fileName;
     link.click();
     setTimeout(()=>URL.revokeObjectURL(link.href),1000);
-    saving=false;
+    reportStatus(fileSaver.labels.downloaded);
+    finish();
     return Promise.resolve();
-  } catch(error) { saving=false; return Promise.reject(error); }
+  } catch(error) { finish();reportStatus(fileSaver.labels.failed);return Promise.reject(error); }
 };
 listen(saveButton,'click',()=>{save().catch(error=>emit('error',error));});
+
+let visualExporter=null;
+const exportItems=[{label:fileSaver.labels.copy,action:()=>save(true).catch(error=>emit('error',error))}];
+if(config.imageExport!==false&&typeof createVisualExporter==='function'){
+visualExporter=createVisualExporter({document,window,downloadTarget:shadow,fileName:config.fileName,lang:TEXT.edit==='编辑'?'zh':'en',
+  beforeCapture(){
+    const wasEditing=editing, priorSelected=selected, active=document.activeElement;
+    const selection=window.getSelection?.();
+    const range=selection?.rangeCount?selection.getRangeAt(0).cloneRange():null;
+    setEditing(false);
+    return ()=>{if(wasEditing&&!destroyed){setEditing(true);selected=priorSelected?.isConnected?priorSelected:null;active?.focus?.({preventScroll:true});if(range&&selection){selection.removeAllRanges();selection.addRange(range);}}};
+  },
+  onStatus({busy,message,error}){
+    exportMenu?.buttons.slice(1).forEach(button=>{button.disabled=busy;});
+    reportStatus(message);
+    if(error)emit('error',error);
+    floating?.refresh();
+  },
+});
+for(const [label,method] of [[visualExporter.labels.image,'exportImage'],[visualExporter.labels.pdf,'exportPdf']]){
+  exportItems.push({label,separator:method==='exportImage',action:()=>visualExporter[method]().catch(()=>{})});
+}
+cleanups.push(()=>visualExporter.destroy());
+}
+// The host is not mounted yet; use toolbar membership rather than isConnected.
+exportMenu=createExportMenu({document,window,parent:bar,before:brand.parentNode===bar?brand:status,label:fileSaver.labels.export,items:exportItems,
+  onOpenChange:open=>floating?.setEditing(editing||open)});
+if(config.ui===false){exportMenu.trigger.hidden=true;exportMenu.buttons.forEach(button=>{button.hidden=true;});}
+cleanups.push(()=>exportMenu.destroy());
+
 
 listen(window,'click',event=>{
   if(!editing||event.target===host||event.target.closest?.('[data-pageon-extension]'))return;
@@ -328,6 +332,9 @@ listen(window,'click',event=>{
 
 const isolateEditingKeyboard=event=>{
   if(event.target.closest?.('[data-pageon-extension]'))return;
+  if(event.type==='keydown'&&config.shortcuts&&!event.isComposing&&(event.metaKey||event.ctrlKey)&&event.key?.toLowerCase()==='s'){
+    event.preventDefault();event.stopImmediatePropagation();save().catch(error=>emit('error',error));return;
+  }
   if(event.type==='keydown'&&config.shortcuts&&event.ctrlKey&&event.altKey){
     if(event.code==='KeyE'){event.preventDefault();setEditing(!editing);return;}
     if(event.code==='KeyS'){event.preventDefault();save().catch(error=>emit('error',error));return;}
@@ -358,6 +365,10 @@ rootObserver.observe(document.documentElement,{childList:true,subtree:true,chara
 const shadowObserver=new MutationObserver(queueMountCheck);
 shadowObserver.observe(shadow,{childList:true,subtree:true,characterData:true});
 ensureMounted();
+if(config.ui!==false){
+  floating=createFloatingToolbar({host,root:shadow,bar,handle:dragHandle,win:window,label:TEXT.expand});
+  cleanups.push(()=>floating.destroy());
+}
 function getSelection(){
   return selected?.isConnected ? {nodeId:selected.getAttribute('data-artifact-local-node'),kind:selected.localName==='text'?'svg-text':'text'} : null;
 }
@@ -365,6 +376,7 @@ listen(document,'input',event=>{
   if(editing && event.target.closest?.('[data-artifact-local-node]'))emit('change',getSelection());
 });
 const controller={
+  saveCopy:()=>save(true),
   enterEdit(){setEditing(true);},
   exitEdit(){setEditing(false);},
   getSelection,
@@ -394,10 +406,14 @@ const controller={
     if(window.PageOnRuntime===controller)delete window.PageOnRuntime;
   },
 };
+if(visualExporter){
+  controller.exportImage=()=>visualExporter.exportImage();
+  controller.exportPdf=()=>visualExporter.exportPdf();
+}
 window.PageOnRuntime=controller;
 return controller;
 
-})({"fileName":"pageon-editable-demo.html","homeUrl":"https://pageon.cc","temporaryEdits":false,"ui":false,"editStyle":"\n    html[data-artifact-local-edit=\"true\"] [data-artifact-local-node]{cursor:text!important;outline:1px dashed rgba(31,157,139,.45)!important;outline-offset:3px}\n    html[data-artifact-local-edit=\"true\"] [data-artifact-local-node]:hover{outline:1px dashed rgba(31,157,139,.85)!important;background:rgba(31,157,139,.04)!important}\n    html[data-artifact-local-edit=\"true\"] [data-artifact-local-node]:focus{outline:2px solid #1f9d8b!important;outline-offset:3px;box-shadow:0 0 0 5px rgba(31,157,139,.1)!important}\n    @media print{pageon-runtime{display:none!important}}\n  ","floatingStyle":":host{position:fixed;right:18px;bottom:18px;z-index:2147483647;display:block;font-family:Inter,-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif}.bar{display:flex;flex-wrap:wrap;max-width:calc(100vw - 32px);box-sizing:border-box;align-items:center;gap:7px;padding:8px;border:1px solid rgba(255,255,255,.12);border-radius:12px;background:rgba(7,26,29,.96);box-shadow:0 16px 45px rgba(7,26,29,.28);color:#fff;font-size:12px;backdrop-filter:blur(12px)}button{border:0;border-radius:8px;padding:8px 10px;background:#fff;color:#071a1d;font:700 12px/1 inherit;cursor:pointer}button:first-of-type{background:#1f9d8b;color:#fff}.drag-handle{cursor:grab;touch-action:none;user-select:none;padding:8px 4px;color:#8edbcd;font-size:20px;line-height:1}.drag-handle:active{cursor:grabbing}.drag-handle:focus-visible{outline:2px solid #8edbcd;border-radius:4px}a{color:#8edbcd;text-decoration:none;font-weight:700;padding:0 4px;white-space:nowrap}","shortcuts":true,"text":{"edit":"编辑","done":"完成","save":"保存副本","brand":"由 PageOn 编辑","move":"拖动工具栏；方向键移动","closeNotice":"关闭提示","warning":"此页面的动态文字只支持临时修改，暂不支持保存修改结果。“完成”仅退出编辑；“保存副本”也不会把修改写回组件数据。重新渲染或打开文件后，修改可能被原内容覆盖。"},"version":"0.2.1"},function createDeckEditSession(doc) {
+})({"fileName":"pageon-editable-demo.html","homeUrl":"https://pageon.cc","temporaryEdits":false,"ui":false,"editStyle":"\n    html[data-artifact-local-edit=\"true\"] [data-artifact-local-node]{cursor:text!important;outline:1px dashed rgba(31,157,139,.45)!important;outline-offset:3px}\n    html[data-artifact-local-edit=\"true\"] [data-artifact-local-node]:hover{outline:1px dashed rgba(31,157,139,.85)!important;background:rgba(31,157,139,.04)!important}\n    html[data-artifact-local-edit=\"true\"] [data-artifact-local-node]:focus{outline:2px solid #1f9d8b!important;outline-offset:3px;box-shadow:0 0 0 5px rgba(31,157,139,.1)!important}\n    @media print{pageon-runtime{display:none!important}}\n  ","floatingStyle":"\n  :host{position:fixed;right:18px;bottom:18px;z-index:2147483647;display:block;font-family:Inter,-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif}\n  [hidden]{display:none!important}\n  .bar{display:flex;flex-wrap:wrap;max-width:calc(100vw - 32px);box-sizing:border-box;align-items:center;gap:6px;padding:6px;\n    border:1px solid rgba(255,255,255,.12);border-radius:12px;background:rgba(7,26,29,.97);box-shadow:0 6px 22px rgba(7,26,29,.18);color:#fff;font-size:13px;line-height:1.4;backdrop-filter:blur(12px)}\n  button{box-sizing:border-box;border:1px solid transparent;border-radius:7px;min-height:36px;padding:7px 11px;background:transparent;color:#e0eeeb;font:inherit;font-weight:500;cursor:pointer;white-space:nowrap}\n  button:hover{background:rgba(255,255,255,.09)}\n  button:focus-visible{outline:2px solid #8edbcd;outline-offset:2px}\n  button:disabled{opacity:.45;cursor:default}\n  .bar>.edit-button{background:#1f9d8b;color:#fff;font-weight:600}\n  .bar>.edit-button:hover{background:#188b7c}\n  .drag-handle{cursor:grab;touch-action:none;user-select:none;padding:7px 4px;color:#8ba7a2;font-size:20px;line-height:1}\n  .drag-handle:active{cursor:grabbing}.drag-handle:focus-visible{outline:2px solid #8edbcd;border-radius:4px}\n  .brand{color:#a1beb8;text-decoration:none;font-weight:400;font-size:11px;padding:3px 6px 3px 12px;margin-left:2px;border-left:1px solid #ffffff24;white-space:nowrap}\n  .brand:hover{color:#c5e5dc}.brand:focus-visible{outline:2px solid #8edbcd;outline-offset:2px;border-radius:3px}\n  .file-status{flex-basis:100%;max-width:340px;padding:3px 6px;line-height:1.5;font-size:12px;overflow-wrap:anywhere}\n  .export-control{position:relative;display:inline-flex;align-items:center}\n  .export-trigger{display:inline-flex;align-items:center;gap:7px}\n  .export-trigger>span{display:flex;color:inherit}\n  .export-trigger svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}\n  .export-menu{position:absolute;z-index:30;bottom:calc(100% + 8px);left:0;box-sizing:border-box;width:184px;max-width:calc(100vw - 24px);overflow:auto;padding:5px;\n    background:#fff;color:#182022;border:1px solid #dfe5e7;border-radius:10px;box-shadow:0 8px 24px #102b2926}\n  .bar .export-menu button{display:flex;justify-content:flex-start;width:100%;min-height:36px;padding:8px 10px;background:transparent;color:#182022;border:0;text-align:left;font:500 13px/1.4 Inter,-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif}\n  .bar .export-menu button:hover,.bar .export-menu button:focus-visible{background:#edf7f5;color:#087f73}\n  .bar .export-menu button:focus-visible{outline:2px solid #1f9d8b;outline-offset:-2px}\n  .bar .export-menu .menu-separator{border-top:1px solid #e5ece9;border-radius:0 0 6px 6px;margin-top:4px;padding-top:11px}\n  @media(pointer:coarse){button,.bar .export-menu button{min-height:44px}.drag-handle{min-width:24px;padding:12px 6px}}\n  @media(max-width:520px){.bar:not(.editor) .brand{flex-basis:100%;text-align:right;border-left:0;padding:2px 6px}}\n\n  :host([data-toolbar-docking]:not([data-toolbar-paused])){transition:left .28s ease,top .28s ease,width .28s ease,height .28s ease}\n  :host([data-toolbar-docking]:not([data-toolbar-paused]))>.bar{width:max-content;transition:opacity .18s ease}\n  :host([data-toolbar-dragging]){transition:none!important}\n  :host([data-docked]){overflow:hidden;border-radius:10px;background:#071a1d;box-shadow:0 4px 16px #071a1d33}\n  :host([data-docked])>.bar{opacity:0;visibility:hidden;pointer-events:none}\n  :host([data-docked][data-dock-edge=left]){border-radius:0 10px 10px 0}\n  :host([data-docked][data-dock-edge=right]){border-radius:10px 0 0 10px}\n  :host([data-docked][data-dock-edge=top]){border-radius:0 0 10px 10px}\n  :host([data-docked][data-dock-edge=bottom]){border-radius:10px 10px 0 0}\n  .dock-tab{position:absolute;inset:0;width:100%;height:100%;padding:8px!important;border:0;border-radius:inherit!important;display:flex;align-items:center;justify-content:center;background:#071a1d!important;color:#8edbcd!important;cursor:pointer}\n  .dock-tab[hidden]{display:none!important}\n  .dock-tab svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}\n  .dock-tab:focus-visible{outline:2px solid #8edbcd;outline-offset:-3px}\n  @media(prefers-reduced-motion:reduce){:host([data-toolbar-docking]),:host([data-toolbar-docking])>.bar{transition:none!important}}\n","shortcuts":true,"imageExport":true,"text":{"edit":"编辑","expand":"展开编辑工具栏","done":"完成","save":"保存副本","brand":"由 PageOn 编辑","move":"拖动工具栏；方向键移动","closeNotice":"关闭提示","warning":"此页面的动态文字只支持临时修改，暂不支持保存修改结果。“完成”仅退出编辑；“保存副本”也不会把修改写回组件数据。重新渲染或打开文件后，修改可能被原内容覆盖。"},"version":"0.2.2"},function createDeckEditSession(doc) {
   let restore = null;
   return {
     enter() {
@@ -412,7 +428,26 @@ return controller;
       });
       const decks = [...groups.entries()].filter(([, slides]) => slides.length > 1);
       if (!decks.length) return;
+      // Capture the currently visible page before all pages become visible.
+      // Use rendered visibility, not template-specific active class names.
+      const visibleArea = slide => {
+        const rect = slide.getBoundingClientRect?.();
+        const style = win.getComputedStyle(slide);
+        if (!rect || slide.closest('[inert],[aria-hidden="true"]') ||
+          style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return 0;
+        return Math.max(0, Math.min(rect.bottom, win.innerHeight) - Math.max(rect.top, 0)) *
+          Math.max(0, Math.min(rect.right, win.innerWidth) - Math.max(rect.left, 0));
+      };
+      const visibleSlide = () => decks.flatMap(([, slides]) => slides).map(slide => ({ slide, area: visibleArea(slide) }))
+        .filter(({ area }) => area > 0).sort((a, b) => b.area - a.area)[0]?.slide;
+      const currentSlide = visibleSlide();
+      const initialHash = win.location?.hash || '';
       const snapshots = new Map();
+      const interactionSnapshots = new Map();
+      const unlockSlide = slide => {
+        if (slide.hasAttribute('inert')) slide.removeAttribute('inert');
+        if (slide.hasAttribute('aria-hidden')) slide.removeAttribute('aria-hidden');
+      };
       const scroll = [win.scrollX, win.scrollY];
       // Focus can scroll overflow:hidden containers as well as the window.
       const scrollPositions = [...doc.querySelectorAll('*')].map(element =>
@@ -431,15 +466,33 @@ return controller;
             patch(ancestor, { position: 'relative', inset: 'auto', display: 'block' });
           }
         }
-        slides.forEach((slide) => patch(slide, {
-          position: 'relative', inset: 'auto', display, opacity: '1', visibility: 'visible',
-          transform: 'none', transition: 'none', animation: 'none', 'pointer-events': 'auto',
-          height: 'auto', 'min-height': heights[index] + 'px', 'max-height': 'none',
-          width: '100%', 'max-width': 'none', 'box-sizing': 'border-box',
-          'margin-bottom': '24px', 'content-visibility': 'visible',
-        }));
+        slides.forEach((slide) => {
+          // Presentation scripts make inactive slides inert. CSS visibility and
+          // pointer-events cannot override that: clicks hit the deck instead.
+          interactionSnapshots.set(slide, [slide.getAttribute('inert'), slide.getAttribute('aria-hidden')]);
+          unlockSlide(slide);
+          patch(slide, {
+            position: 'relative', inset: 'auto', display, opacity: '1', visibility: 'visible',
+            transform: 'none', transition: 'none', animation: 'none', 'pointer-events': 'auto',
+            height: 'auto', 'min-height': heights[index] + 'px', 'max-height': 'none',
+            width: '100%', 'max-width': 'none', 'box-sizing': 'border-box',
+            'margin-bottom': '24px', 'content-visibility': 'visible',
+          });
+        });
       });
+      // A running presentation may reapply these attributes after entering edit
+      // mode (timers, resize or hash navigation). Keep only expanded slides open.
+      const observer = win.MutationObserver ? new win.MutationObserver(records => {
+        records.forEach(({ target }) => {
+          if (interactionSnapshots.has(target)) unlockSlide(target);
+        });
+      }) : null;
+      interactionSnapshots.forEach((_, slide) => observer?.observe(slide, { attributes: true, attributeFilter: ['inert', 'aria-hidden'] }));
       restore = () => {
+        // While expanded, the presentation's active class still marks the old
+        // page. Choose the page the reader is actually looking at instead.
+        const finishedSlide = visibleSlide();
+        observer?.disconnect();
         // Commit the original geometry without animating away from the editing layout.
         // Remove this guard synchronously so it never leaks into saved HTML.
         const guard = doc.createElement('style');
@@ -449,15 +502,63 @@ return controller;
           if (style === null) element.removeAttribute('style');
           else element.setAttribute('style', style);
         });
+        interactionSnapshots.forEach(([inert, ariaHidden], slide) => {
+          for (const [name, value] of [['inert', inert], ['aria-hidden', ariaHidden]]) {
+            if (value === null) slide.removeAttribute(name);
+            else slide.setAttribute(name, value);
+          }
+        });
         void doc.documentElement.offsetHeight;
         scrollPositions.forEach(([element, left, top]) => {
           if (element.scrollLeft !== left) element.scrollLeft = left;
           if (element.scrollTop !== top) element.scrollTop = top;
         });
         win.scrollTo(...scroll);
+        if (finishedSlide && finishedSlide !== currentSlide) {
+          const slides = decks.find(([, pages]) => pages.includes(currentSlide) && pages.includes(finishedSlide))?.[1];
+          let nextHash;
+          if (currentSlide?.id && finishedSlide.id &&
+            [currentSlide.id, encodeURIComponent(currentSlide.id)].includes(initialHash.slice(1))) {
+            nextHash = '#' + encodeURIComponent(finishedSlide.id);
+          } else if (slides) {
+            // Infer a single unambiguous page index from the document's own URL.
+            // No slide/page prefix, index base or route shape is assumed.
+            const index = slides.indexOf(currentSlide);
+            const parts = [...initialHash.matchAll(/\d+/g)].filter(part =>
+              Number(part[0]) === index || Number(part[0]) === index + 1);
+            if (parts.length === 1) {
+              const part = parts[0];
+              const value = String(slides.indexOf(finishedSlide) + Number(part[0]) - index);
+              const formatted = part[0].startsWith('0') ? value.padStart(part[0].length, '0') : value;
+              nextHash = initialHash.slice(0, part.index) + formatted + initialHash.slice(part.index + part[0].length);
+            }
+          }
+          if (nextHash && win.history?.replaceState && win.dispatchEvent && win.Event) {
+            const previousHash = win.location.hash;
+            const dispatchHash = hash => {
+              const oldURL = win.location.href;
+              win.history.replaceState(win.history.state, '', hash || win.location.pathname + win.location.search);
+              win.dispatchEvent(win.HashChangeEvent
+                ? new win.HashChangeEvent('hashchange', { oldURL, newURL: win.location.href })
+                : new win.Event('hashchange'));
+            };
+            // The original script must actually activate the requested page.
+            // A numeric URL alone is not proof of a presentation controller.
+            dispatchHash(nextHash);
+            if (!(visibleArea(finishedSlide) > 0 && visibleArea(currentSlide) === 0)) dispatchHash(previousHash);
+          }
+          const style = win.getComputedStyle(finishedSlide);
+          if (!finishedSlide.closest('[inert],[aria-hidden="true"]') &&
+            style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0') {
+            finishedSlide.scrollIntoView?.({ block: 'start', inline: 'nearest', behavior: 'instant' });
+          }
+        }
         void doc.documentElement.offsetHeight;
         guard.remove();
       };
+      // Expanding earlier slides moves this page down the document. Keep it in
+      // view without focus changes or a smooth trip through the earlier pages.
+      currentSlide?.scrollIntoView?.({ block: 'start', inline: 'nearest', behavior: 'instant' });
     },
     exit() {
       if (!restore) return;
@@ -465,12 +566,314 @@ return controller;
       restore = null;
     },
   };
-},document,window);</script><script>
+},document,window,'',function createFloatingToolbar({ host, root, bar, handle, win, label }) {
+  const doc = host.ownerDocument;
+  const tab = doc.createElement('button');
+  tab.type = 'button'; tab.className = 'dock-tab'; tab.hidden = true;
+  tab.setAttribute('aria-label', label); tab.setAttribute('aria-expanded', 'false');
+  tab.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 3 5 5-12 12-6 1 1-6Z M14 5l5 5"/></svg>';
+  root.append(tab);
+  let timer = null, hovered = false, focused = false, keyboard = false;
+  let paused = false, destroyed = false, collapsed = false, drag = null, position = null, edge = 'right';
+  const setTimer = win.setTimeout?.bind(win) || globalThis.setTimeout;
+  const clearTimer = win.clearTimeout?.bind(win) || globalThis.clearTimeout;
+  const cleanups = [];
+  const listen = (target, type, fn, options) => {
+    target.addEventListener(type, fn, options);
+    cleanups.push(() => target.removeEventListener(type, fn, options));
+  };
+  const cancel = () => { if (timer !== null) clearTimer(timer); timer = null; };
+  const clamp = (value, size, limit, margin = 8) => Math.max(margin, Math.min(value, Math.max(margin, limit - size - margin)));
+  const measure = () => {
+    const rect = bar.getBoundingClientRect();
+    return { width: Math.min(rect.width, win.innerWidth - 16), height: rect.height };
+  };
+  const place = (x, y, width, height) => {
+    Object.assign(host.style, { left: x + 'px', top: y + 'px', right: 'auto', bottom: 'auto', width: width + 'px', height: height + 'px' });
+  };
+  const nearest = (x, y, width, height) => [
+    ['right', win.innerWidth - x - width], ['left', x], ['top', y], ['bottom', win.innerHeight - y - height],
+  ].sort((a, b) => a[1] - b[1])[0][0];
+  const render = () => {
+    if (paused || !position) return;
+    const size = measure();
+    position.x = clamp(position.x, size.width, win.innerWidth);
+    position.y = clamp(position.y, size.height, win.innerHeight);
+    host.setAttribute('data-dock-edge', edge);
+    if (collapsed) {
+      const vertical = edge === 'left' || edge === 'right';
+      const width = vertical ? 36 : 48, height = vertical ? 48 : 36;
+      const x = edge === 'left' ? 0 : edge === 'right' ? win.innerWidth - width : clamp(position.x, width, win.innerWidth);
+      const y = edge === 'top' ? 0 : edge === 'bottom' ? win.innerHeight - height : clamp(position.y, height, win.innerHeight);
+      place(x, y, width, height);
+    } else place(position.x, position.y, size.width, size.height);
+  };
+  const schedule = () => {
+    cancel();
+    if (paused || destroyed || hovered || focused || drag || collapsed) return;
+    timer = setTimer(() => {
+      timer = null;
+      if (paused || destroyed || hovered || focused || drag) return;
+      const size = measure();
+      edge = nearest(position.x, position.y, size.width, size.height);
+      collapsed = true;
+      bar.setAttribute('inert', ''); bar.setAttribute('aria-hidden', 'true');
+      tab.hidden = false;
+      host.setAttribute('data-docked', '');
+      render();
+    }, 3000) ?? null;
+  };
+  const expand = () => {
+    cancel();
+    if (paused || destroyed || !collapsed) return;
+    const size = measure();
+    if (edge === 'left') position.x = 8;
+    if (edge === 'right') position.x = win.innerWidth - size.width - 8;
+    if (edge === 'top') position.y = 8;
+    if (edge === 'bottom') position.y = win.innerHeight - size.height - 8;
+    collapsed = false;
+    host.removeAttribute('data-docked');
+    bar.removeAttribute('inert'); bar.removeAttribute('aria-hidden');
+    const transferFocus = root.activeElement === tab;
+    tab.hidden = true;
+    render();
+    if (transferFocus) handle.focus({ preventScroll: true });
+  };
+  const move = (x, y) => {
+    const size = measure();
+    position = { x: clamp(x, size.width, win.innerWidth), y: clamp(y, size.height, win.innerHeight) };
+    edge = nearest(position.x, position.y, size.width, size.height);
+    render();
+  };
+  listen(host, 'pointerenter', event => { if (event.pointerType === 'touch') return; hovered = true; expand(); cancel(); });
+  listen(host, 'pointerleave', () => { hovered = false; schedule(); });
+  listen(win, 'keydown', event => { if (event.key === 'Tab') keyboard = true; }, true);
+  listen(win, 'pointerdown', () => { keyboard = false; focused = false; schedule(); }, true);
+  listen(root, 'focusin', () => { if (keyboard) { focused = true; expand(); cancel(); } });
+  listen(root, 'focusout', event => {
+    if (event.relatedTarget && root.contains(event.relatedTarget)) return;
+    focused = false; schedule();
+  });
+  listen(tab, 'click', event => { event.preventDefault(); expand(); schedule(); });
+  listen(handle, 'pointerdown', event => {
+    if (paused || event.button !== 0 || event.isPrimary === false) return;
+    event.preventDefault(); cancel(); expand();
+    const rect = host.getBoundingClientRect();
+    drag = { id: event.pointerId, x: event.clientX, y: event.clientY, left: rect.left, top: rect.top };
+    host.setAttribute('data-toolbar-dragging', '');
+    handle.setPointerCapture?.(event.pointerId);
+  });
+  listen(handle, 'pointermove', event => {
+    if (!drag || event.pointerId !== drag.id) return;
+    event.preventDefault(); move(drag.left + event.clientX - drag.x, drag.top + event.clientY - drag.y);
+  });
+  const finish = event => {
+    if (!drag || event.pointerId !== drag.id) return;
+    drag = null; host.removeAttribute('data-toolbar-dragging');
+    if (handle.hasPointerCapture?.(event.pointerId)) handle.releasePointerCapture(event.pointerId);
+    // Pointer capture may suppress pointerleave while dragging away from the bar.
+    const rect = host.getBoundingClientRect();
+    hovered = event.pointerType !== 'touch' && event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom;
+    schedule();
+  };
+  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(type => listen(handle, type, finish));
+  listen(handle, 'click', event => event.preventDefault());
+  listen(handle, 'keydown', event => {
+    const delta = { ArrowLeft: [-20, 0], ArrowRight: [20, 0], ArrowUp: [0, -20], ArrowDown: [0, 20] }[event.key];
+    if (paused || !delta) return;
+    event.preventDefault(); focused = true; expand(); cancel();
+    move(position.x + delta[0], position.y + delta[1]);
+  });
+  listen(win, 'resize', () => { render(); });
+  const refresh = () => {
+    if (paused || destroyed) return;
+    const rect = host.getBoundingClientRect();
+    if (!position) position = { x: rect.left, y: rect.top };
+    render(); schedule();
+  };
+  hovered = host.matches(':hover');
+  refresh();
+  host.setAttribute('data-toolbar-docking', '');
+  return {
+    refresh,
+    setEditing(value) {
+      cancel(); expand(); paused = value; drag = null;
+      host.removeAttribute('data-toolbar-dragging');
+      host.toggleAttribute('data-toolbar-paused', value);
+      if (value) { host.style.removeProperty('width'); host.style.removeProperty('height'); }
+      else { hovered = host.matches(':hover'); focused = keyboard && !!root.activeElement; refresh(); }
+    },
+    destroy() { destroyed = true; cancel(); cleanups.forEach(fn => fn()); tab.remove(); },
+  };
+},(function(){/*! html-to-image
+MIT License
+
+Copyright (c) 2017-2025 W.Y.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+*/
+var PageOnVisualExport=(()=>{var be=Object.defineProperty;var wt=Object.getOwnPropertyDescriptor;var bt=Object.getOwnPropertyNames;var St=Object.prototype.hasOwnProperty;var xt=(e,t)=>{for(var n in t)be(e,n,{get:t[n],enumerable:!0})},Et=(e,t,n,r)=>{if(t&&typeof t=="object"||typeof t=="function")for(let i of bt(t))!St.call(e,i)&&i!==n&&be(e,i,{get:()=>t[i],enumerable:!(r=wt(t,i))||r.enumerable});return e};var vt=e=>Et(be({},"__esModule",{value:!0}),e);var Cr={};xt(Cr,{createVisualExporter:()=>yt});function Fe(e,t){if(e.match(/^[a-z]+:\/\//i))return e;if(e.match(/^\/\//))return window.location.protocol+e;if(e.match(/^[a-z]+:/i))return e;let n=document.implementation.createHTMLDocument(),r=n.createElement("base"),i=n.createElement("a");return n.head.appendChild(r),n.body.appendChild(i),t&&(r.href=t),i.href=e,i.href}var Oe=(()=>{let e=0,t=()=>"0000".concat((Math.random()*36**4<<0).toString(36)).slice(-4);return()=>(e+=1,"u".concat(t()).concat(e))})();function j(e){let t=[];for(let n=0,r=e.length;n<r;n++)t.push(e[n]);return t}var ee=null;function de(e={}){return ee||(e.includeStyleProperties?(ee=e.includeStyleProperties,ee):(ee=j(window.getComputedStyle(document.documentElement)),ee))}function me(e,t){let r=(e.ownerDocument.defaultView||window).getComputedStyle(e).getPropertyValue(t);return r?parseFloat(r.replace("px","")):0}function Rt(e){let t=me(e,"border-left-width"),n=me(e,"border-right-width");return e.clientWidth+t+n}function Ct(e){let t=me(e,"border-top-width"),n=me(e,"border-bottom-width");return e.clientHeight+t+n}function Se(e,t={}){let n=t.width||Rt(e),r=t.height||Ct(e);return{width:n,height:r}}function _e(){let e,t;try{t=process}catch{}let n=t&&t.env?t.env.devicePixelRatio:null;return n&&(e=parseInt(n,10),Number.isNaN(e)&&(e=1)),e||window.devicePixelRatio||1}var W=16384;function qe(e){(e.width>W||e.height>W)&&(e.width>W&&e.height>W?e.width>e.height?(e.height*=W/e.width,e.width=W):(e.width*=W/e.height,e.height=W):e.width>W?(e.height*=W/e.width,e.width=W):(e.width*=W/e.height,e.height=W))}function te(e){return new Promise((t,n)=>{let r=new Image;r.onload=()=>{r.decode().then(()=>{requestAnimationFrame(()=>t(r))})},r.onerror=n,r.crossOrigin="anonymous",r.decoding="async",r.src=e})}async function At(e){return Promise.resolve().then(()=>new XMLSerializer().serializeToString(e)).then(encodeURIComponent).then(t=>"data:image/svg+xml;charset=utf-8,".concat(t))}async function ze(e,t,n){let r="http://www.w3.org/2000/svg",i=document.createElementNS(r,"svg"),o=document.createElementNS(r,"foreignObject");return i.setAttribute("width","".concat(t)),i.setAttribute("height","".concat(n)),i.setAttribute("viewBox","0 0 ".concat(t," ").concat(n)),o.setAttribute("width","100%"),o.setAttribute("height","100%"),o.setAttribute("x","0"),o.setAttribute("y","0"),o.setAttribute("externalResourcesRequired","true"),i.appendChild(o),o.appendChild(e),At(i)}var O=(e,t)=>{if(e instanceof t)return!0;let n=Object.getPrototypeOf(e);return n===null?!1:n.constructor.name===t.name||O(n,t)};function Pt(e){let t=e.getPropertyValue("content");return"".concat(e.cssText," content: '").concat(t.replace(/'|"/g,""),"';")}function $t(e,t){return de(t).map(n=>{let r=e.getPropertyValue(n),i=e.getPropertyPriority(n);return"".concat(n,": ").concat(r).concat(i?" !important":"",";")}).join(" ")}function Tt(e,t,n,r){let i=".".concat(e,":").concat(t),o=n.cssText?Pt(n):$t(n,r);return document.createTextNode("".concat(i,"{").concat(o,"}"))}function Ne(e,t,n,r){let i=window.getComputedStyle(e,n),o=i.getPropertyValue("content");if(o===""||o==="none")return;let a=Oe();try{t.className="".concat(t.className," ").concat(a)}catch{return}let c=document.createElement("style");c.appendChild(Tt(a,n,i,r)),t.appendChild(c)}function We(e,t,n){Ne(e,t,":before",n),Ne(e,t,":after",n)}var He="application/font-woff",je="image/jpeg",kt={woff:He,woff2:He,ttf:"application/font-truetype",eot:"application/vnd.ms-fontobject",png:"image/png",jpg:je,jpeg:je,gif:"image/gif",tiff:"image/tiff",svg:"image/svg+xml",webp:"image/webp"};function Lt(e){let t=/\.([^./]*?)$/g.exec(e);return t?t[1]:""}function re(e){let t=Lt(e).toLowerCase();return kt[t]||""}function Ut(e){return e.split(/,/)[1]}function ae(e){return e.search(/^(data:)/)!==-1}function Ee(e,t){return"data:".concat(t,";base64,").concat(e)}async function ve(e,t,n){let r=await fetch(e,t);if(r.status===404)throw new Error('Resource "'.concat(r.url,'" not found'));let i=await r.blob();return new Promise((o,a)=>{let c=new FileReader;c.onerror=a,c.onloadend=()=>{try{o(n({res:r,result:c.result}))}catch(p){a(p)}},c.readAsDataURL(i)})}var xe={};function It(e,t,n){let r=e.replace(/\?.*/,"");return n&&(r=e),/ttf|otf|eot|woff2?/i.test(r)&&(r=r.replace(/.*\//,"")),t?"[".concat(t,"]").concat(r):r}async function ne(e,t,n){let r=It(e,t,n.includeQueryParams);if(xe[r]!=null)return xe[r];n.cacheBust&&(e+=(/\?/.test(e)?"&":"?")+new Date().getTime());let i;try{let o=await ve(e,n.fetchRequestInit,({res:a,result:c})=>(t||(t=a.headers.get("Content-Type")||""),Ut(c)));i=Ee(o,t)}catch(o){i=n.imagePlaceholder||"";let a="Failed to fetch resource: ".concat(e);o&&(a=typeof o=="string"?o:o.message),a&&console.warn(a)}return xe[r]=i,i}async function Mt(e){let t=e.toDataURL();return t==="data:,"?e.cloneNode(!1):te(t)}async function Dt(e,t){if(e.currentSrc){let o=document.createElement("canvas"),a=o.getContext("2d");o.width=e.clientWidth,o.height=e.clientHeight,a?.drawImage(e,0,0,o.width,o.height);let c=o.toDataURL();return te(c)}let n=e.poster,r=re(n),i=await ne(n,r,t);return te(i)}async function Vt(e,t){var n;try{if(!((n=e?.contentDocument)===null||n===void 0)&&n.body)return await ce(e.contentDocument.body,t,!0)}catch{}return e.cloneNode(!1)}async function Ft(e,t){return O(e,HTMLCanvasElement)?Mt(e):O(e,HTMLVideoElement)?Dt(e,t):O(e,HTMLIFrameElement)?Vt(e,t):e.cloneNode(Ge(e))}var Ot=e=>e.tagName!=null&&e.tagName.toUpperCase()==="SLOT",Ge=e=>e.tagName!=null&&e.tagName.toUpperCase()==="SVG";async function _t(e,t,n){var r,i;if(Ge(t))return t;let o=[];return Ot(e)&&e.assignedNodes?o=j(e.assignedNodes()):O(e,HTMLIFrameElement)&&(!((r=e.contentDocument)===null||r===void 0)&&r.body)?o=j(e.contentDocument.body.childNodes):o=j(((i=e.shadowRoot)!==null&&i!==void 0?i:e).childNodes),o.length===0||O(e,HTMLVideoElement)||await o.reduce((a,c)=>a.then(()=>ce(c,n)).then(p=>{p&&t.appendChild(p)}),Promise.resolve()),t}function qt(e,t,n){let r=t.style;if(!r)return;let i=window.getComputedStyle(e);i.cssText?(r.cssText=i.cssText,r.transformOrigin=i.transformOrigin):de(n).forEach(o=>{let a=i.getPropertyValue(o);if(o==="font-size"&&a.endsWith("px")){let c=Math.floor(parseFloat(a.substring(0,a.length-2)))-.1;a="".concat(c,"px")}O(e,HTMLIFrameElement)&&o==="display"&&a==="inline"&&(a="block"),o==="d"&&t.getAttribute("d")&&(a="path(".concat(t.getAttribute("d"),")")),r.setProperty(o,a,i.getPropertyPriority(o))})}function zt(e,t){O(e,HTMLTextAreaElement)&&(t.innerHTML=e.value),O(e,HTMLInputElement)&&t.setAttribute("value",e.value)}function Nt(e,t){if(O(e,HTMLSelectElement)){let r=Array.from(t.children).find(i=>e.value===i.getAttribute("value"));r&&r.setAttribute("selected","")}}function Wt(e,t,n){return O(t,Element)&&(qt(e,t,n),We(e,t,n),zt(e,t),Nt(e,t)),t}async function Ht(e,t){let n=e.querySelectorAll?e.querySelectorAll("use"):[];if(n.length===0)return e;let r={};for(let o=0;o<n.length;o++){let c=n[o].getAttribute("xlink:href");if(c){let p=e.querySelector(c),C=document.querySelector(c);!p&&C&&!r[c]&&(r[c]=await ce(C,t,!0))}}let i=Object.values(r);if(i.length){let o="http://www.w3.org/1999/xhtml",a=document.createElementNS(o,"svg");a.setAttribute("xmlns",o),a.style.position="absolute",a.style.width="0",a.style.height="0",a.style.overflow="hidden",a.style.display="none";let c=document.createElementNS(o,"defs");a.appendChild(c);for(let p=0;p<i.length;p++)c.appendChild(i[p]);e.appendChild(a)}return e}async function ce(e,t,n){return!n&&t.filter&&!t.filter(e)?null:Promise.resolve(e).then(r=>Ft(r,t)).then(r=>_t(e,r,t)).then(r=>Wt(e,r,t)).then(r=>Ht(r,t))}var Be=/url\((['"]?)([^'"]+?)\1\)/g,jt=/url\([^)]+\)\s*format\((["']?)([^"']+)\1\)/g,Gt=/src:\s*(?:url\([^)]+\)\s*format\([^)]+\)[,;]\s*)+/g;function Bt(e){let t=e.replace(/([.*+?^${}()|\[\]\/\\])/g,"\\$1");return new RegExp("(url\\(['\"]?)(".concat(t,")(['\"]?\\))"),"g")}function Xt(e){let t=[];return e.replace(Be,(n,r,i)=>(t.push(i),n)),t.filter(n=>!ae(n))}async function Jt(e,t,n,r,i){try{let o=n?Fe(t,n):t,a=re(t),c;if(i){let p=await i(o);c=Ee(p,a)}else c=await ne(o,a,r);return e.replace(Bt(t),"$1".concat(c,"$3"))}catch{}return e}function Kt(e,{preferredFontFormat:t}){return t?e.replace(Gt,n=>{for(;;){let[r,,i]=jt.exec(n)||[];if(!i)return"";if(i===t)return"src: ".concat(r,";")}}):e}function Re(e){return e.search(Be)!==-1}async function pe(e,t,n){if(!Re(e))return e;let r=Kt(e,n);return Xt(r).reduce((o,a)=>o.then(c=>Jt(c,a,t,n)),Promise.resolve(r))}async function oe(e,t,n){var r;let i=(r=t.style)===null||r===void 0?void 0:r.getPropertyValue(e);if(i){let o=await pe(i,null,n);return t.style.setProperty(e,o,t.style.getPropertyPriority(e)),!0}return!1}async function Yt(e,t){await oe("background",e,t)||await oe("background-image",e,t),await oe("mask",e,t)||await oe("-webkit-mask",e,t)||await oe("mask-image",e,t)||await oe("-webkit-mask-image",e,t)}async function Qt(e,t){let n=O(e,HTMLImageElement);if(!(n&&!ae(e.src))&&!(O(e,SVGImageElement)&&!ae(e.href.baseVal)))return;let r=n?e.src:e.href.baseVal,i=await ne(r,re(r),t);await new Promise((o,a)=>{e.onload=o,e.onerror=t.onImageErrorHandler?(...p)=>{try{o(t.onImageErrorHandler(...p))}catch(C){a(C)}}:a;let c=e;c.decode&&(c.decode=o),c.loading==="lazy"&&(c.loading="eager"),n?(e.srcset="",e.src=i):e.href.baseVal=i})}async function Zt(e,t){let r=j(e.childNodes).map(i=>Ce(i,t));await Promise.all(r).then(()=>e)}async function Ce(e,t){O(e,Element)&&(await Yt(e,t),await Qt(e,t),await Zt(e,t))}function Xe(e,t){let{style:n}=e;t.backgroundColor&&(n.backgroundColor=t.backgroundColor),t.width&&(n.width="".concat(t.width,"px")),t.height&&(n.height="".concat(t.height,"px"));let r=t.style;return r!=null&&Object.keys(r).forEach(i=>{n[i]=r[i]}),e}var Je={};async function Ke(e){let t=Je[e];if(t!=null)return t;let r=await(await fetch(e)).text();return t={url:e,cssText:r},Je[e]=t,t}async function Ye(e,t){let n=e.cssText,r=/url\(["']?([^"')]+)["']?\)/g,o=(n.match(/url\([^)]+\)/g)||[]).map(async a=>{let c=a.replace(r,"$1");return c.startsWith("https://")||(c=new URL(c,e.url).href),ve(c,t.fetchRequestInit,({result:p})=>(n=n.replace(a,"url(".concat(p,")")),[a,p]))});return Promise.all(o).then(()=>n)}function Qe(e){if(e==null)return[];let t=[],n=/(\/\*[\s\S]*?\*\/)/gi,r=e.replace(n,""),i=new RegExp("((@.*?keyframes [\\s\\S]*?){([\\s\\S]*?}\\s*?)})","gi");for(;;){let p=i.exec(r);if(p===null)break;t.push(p[0])}r=r.replace(i,"");let o=/@import[\s\S]*?url\([^)]*\)[\s\S]*?;/gi,a="((\\s*?(?:\\/\\*[\\s\\S]*?\\*\\/)?\\s*?@media[\\s\\S]*?){([\\s\\S]*?)}\\s*?})|(([\\s\\S]*?){([\\s\\S]*?)})",c=new RegExp(a,"gi");for(;;){let p=o.exec(r);if(p===null){if(p=c.exec(r),p===null)break;o.lastIndex=c.lastIndex}else c.lastIndex=o.lastIndex;t.push(p[0])}return t}async function er(e,t){let n=[],r=[];return e.forEach(i=>{if("cssRules"in i)try{j(i.cssRules||[]).forEach((o,a)=>{if(o.type===CSSRule.IMPORT_RULE){let c=a+1,p=o.href,C=Ke(p).then(l=>Ye(l,t)).then(l=>Qe(l).forEach(x=>{try{i.insertRule(x,x.startsWith("@import")?c+=1:i.cssRules.length)}catch(b){console.error("Error inserting rule from remote css",{rule:x,error:b})}})).catch(l=>{console.error("Error loading remote css",l.toString())});r.push(C)}})}catch(o){let a=e.find(c=>c.href==null)||document.styleSheets[0];i.href!=null&&r.push(Ke(i.href).then(c=>Ye(c,t)).then(c=>Qe(c).forEach(p=>{a.insertRule(p,a.cssRules.length)})).catch(c=>{console.error("Error loading remote stylesheet",c)})),console.error("Error inlining remote css file",o)}}),Promise.all(r).then(()=>(e.forEach(i=>{if("cssRules"in i)try{j(i.cssRules||[]).forEach(o=>{n.push(o)})}catch(o){console.error("Error while reading CSS rules from ".concat(i.href),o)}}),n))}function tr(e){return e.filter(t=>t.type===CSSRule.FONT_FACE_RULE).filter(t=>Re(t.style.getPropertyValue("src")))}async function rr(e,t){if(e.ownerDocument==null)throw new Error("Provided element is not within a Document");let n=j(e.ownerDocument.styleSheets),r=await er(n,t);return tr(r)}function Ze(e){return e.trim().replace(/["']/g,"")}function nr(e){let t=new Set;function n(r){(r.style.fontFamily||getComputedStyle(r).fontFamily).split(",").forEach(o=>{t.add(Ze(o))}),Array.from(r.children).forEach(o=>{o instanceof HTMLElement&&n(o)})}return n(e),t}async function et(e,t){let n=await rr(e,t),r=nr(e);return(await Promise.all(n.filter(o=>r.has(Ze(o.style.fontFamily))).map(o=>{let a=o.parentStyleSheet?o.parentStyleSheet.href:null;return pe(o.cssText,a,t)}))).join("\n")}async function tt(e,t){let n=t.fontEmbedCSS!=null?t.fontEmbedCSS:t.skipFonts?null:await et(e,t);if(n){let r=document.createElement("style"),i=document.createTextNode(n);r.appendChild(i),e.firstChild?e.insertBefore(r,e.firstChild):e.appendChild(r)}}async function or(e,t={}){let{width:n,height:r}=Se(e,t),i=await ce(e,t,!0);return await tt(i,t),await Ce(i,t),Xe(i,t),await ze(i,n,r)}async function rt(e,t={}){let{width:n,height:r}=Se(e,t),i=await or(e,t),o=await te(i),a=document.createElement("canvas"),c=a.getContext("2d"),p=t.pixelRatio||_e(),C=t.canvasWidth||n,l=t.canvasHeight||r;return a.width=C*p,a.height=l*p,t.skipAutoScale||qe(a),a.style.width="".concat(C),a.style.height="".concat(l),t.backgroundColor&&(c.fillStyle=t.backgroundColor,c.fillRect(0,0,a.width,a.height)),c.drawImage(o,0,0,a.width,a.height),a}async function nt(e,t,n,r=[e.documentElement]){let i=e.defaultView,o=new Set,a=[],c=new Set,p=new Set,C=0,l=()=>new Error("assets"),x=s=>s.replace(/\\([\da-f]{1,6}\s?|[^\r\n\f])/gi,(d,w)=>{if(/^[\da-f]/i.test(w)){let g=parseInt(w.trim(),16);return g>0&&g<=1114111?String.fromCodePoint(g):"\uFFFD"}return w}),b=s=>x(s.trim().replace(/^(['"])([\s\S]*)\1$/,"$2")).toLowerCase();function y(s){let d=[],w=0,g="",v=0;for(let A=0;A<s.length;A++){let P=s[A];if(P==="\\"){A++;continue}if(g){P===g&&(g="");continue}P==='"'||P==="'"?g=P:P==="("?v++:P===")"?v--:P===","&&!v&&(d.push(s.slice(w,A).trim()),w=A+1)}return d.push(s.slice(w).trim()),d.filter(Boolean)}for(let s of new Set(r.flatMap(d=>[d,...d.querySelectorAll("*")])))for(let d of[null,"::before","::after","::marker"]){let w;try{w=i.getComputedStyle(s,d)}catch{continue}d&&(!w.content||["none","normal"].includes(w.content))||y(w.fontFamily||w.getPropertyValue("font-family")||"").forEach(g=>o.add(b(g)))}if(!o.size)return"";let h=()=>/url\(\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|((?:\\.|[^)\\])*))\s*\)/gi,u=(s,d)=>new URL(x(s.trim()),d||e.baseURI).href,m=s=>!s||!i.matchMedia||i.matchMedia(s).matches;async function f(s,d){let w=s.style;if(!o.has(b(w.getPropertyValue("font-family"))))return;let g=w.getPropertyValue("src"),v=y(g),A=[],P=0,V=0;for(let $ of v){let U=[...$.matchAll(h())];if(!U.length){A.push($);continue}P++;try{let k=$;for(let I of U){let N=u(I[1]??I[2]??I[3],d),H=N.startsWith("data:")?N:await t(N);if(typeof H!="string"||!H.startsWith("data:"))throw l();k=k.replace(I[0],"url(".concat(JSON.stringify(H),")"))}A.push(k),V++}catch{}}if(P&&!V)throw l();if(!A.length)return;let q=Array.from({length:w.length},($,U)=>{let k=w[U],I=k==="src"?A.join(", "):w.getPropertyValue(k);return"".concat(k,": ").concat(I).concat(w.getPropertyPriority(k)?" !important":"",";")});a.push("@font-face { ".concat(q.join(" ")," }"))}function S(s){let d=[],w="",g=0,v=0,A="";for(let P=0;P<s.length;P++){let V=s[P];if(V==="\\"){P++;continue}if(A){V===A&&(A="");continue}if(V==='"'||V==="'"){A=V;continue}if(V==="/"&&s[P+1]==="*"){let M=s.indexOf("*/",P+2);P=M<0?s.length:M+1;continue}if(V==="{"?v++:V==="}"&&v--,v||s.slice(P,P+7).toLowerCase()!=="@import"||/[\w-]/.test(s[P+7]||""))continue;let q=P+7,$=0,U="";for(;q<s.length;q++){let M=s[q];if(M==="\\"){q++;continue}if(U){M===U&&(U="");continue}if(M==='"'||M==="'")U=M;else if(M==="(")$++;else if(M===")")$--;else if(M===";"&&!$)break}let k=s.slice(P+7,q).replace(/\/\*[\s\S]*?\*\//g,"").trim(),I=h().exec(k),N=k.match(/^(['"])((?:\\.|[^\\])*?)\1/),H=I?.index===0?I:N;if(!H)throw l();let se=I?.index===0?I[1]??I[2]??I[3]:N[2],L=k.slice(H[0].length).trim();(/^(layer|supports)\b/i.test(L)||m(L))&&d.push(se),w+=s.slice(g,P),g=q+1,P=q}return{css:w+s.slice(g),imports:d}}async function R(s,d){if(c.has(s))return;if(d>16||++C>128)throw l();c.add(s);let w;try{w=await n(s)}catch{throw l()}if(typeof w!="string"||w.length>4*1024*1024)throw l();let g=S(w);for(let A of g.imports)await R(u(A,s),d+1);let v;try{v=new i.CSSStyleSheet,v.replaceSync(g.css)}catch{throw l()}await E(v.cssRules,s,d)}async function E(s,d,w){for(let g of s)if(g.type===5)await f(g,d);else if(g.type===3){if(!m(g.media?.mediaText))continue;let v=u(g.href,d),A;try{A=g.styleSheet?.cssRules}catch{}if(A?.length){if(c.has(v))continue;if(w>=16||++C>128)throw l();c.add(v),await E(A,v,w+1)}else await R(v,w+1)}else if(g.cssRules){if(g.type===4&&!m(g.conditionText||g.media?.mediaText)||g.type===12&&i.CSS?.supports&&!i.CSS.supports(g.conditionText))continue;if(w>=16)throw l();await E(g.cssRules,d,w+1)}}for(let s of[...e.styleSheets,...e.adoptedStyleSheets||[]]){if(s.disabled||p.has(s)||!m(s.media?.mediaText))continue;p.add(s);let d;try{d=s.cssRules}catch{}if(d){if(++C>128)throw l();s.href&&c.add(s.href),await E(d,s.href||e.baseURI,0)}else if(s.href)await R(u(s.href,e.baseURI),0);else throw l()}return a.join("\n")}function ie(e,t="*"){return[...new Set(e.flatMap(n=>[...n.matches?.(t)?[n]:[],...n.querySelectorAll(t)]))]}function ir(e,t){let n=t.display||"";return n==="contents"||/^(?:inline(?: flow)?(?: list-item)?|(?:inline |block )?ruby(?:-.*)?|table-(?:row(?:-group)?|header-group|footer-group|column(?:-group)?))$/.test(n)?!1:e.namespaceURI==="http://www.w3.org/2000/svg"?e.localName==="svg"&&e.parentElement?.namespaceURI!==e.namespaceURI:!0}var ot=e=>e.display==="none"||e.display!=="contents"&&parseFloat(e.opacity)===0;function le(e,t,n=e.ownerDocument.defaultView,r=null){if(!t||e!==t&&!t.contains(e))return!1;let i=n.getComputedStyle(e,r);if(i.visibility==="hidden"||i.visibility==="collapse"||ot(i))return!1;for(let o=e;o;o=o.parentElement){let a=o===e&&!r?i:n.getComputedStyle(o);if(ot(a)||(o!==e||r)&&a.contentVisibility==="hidden"&&ir(o,a))return!1;if(o===t)return!0}return!1}function ge(e,t){return t.find(n=>n===e||n.contains(e))}function Ae(e,t){for(let n of ie(t,"iframe,object,embed")){let r=ge(n,t);if(!(le(n,r)||n.localName==="object"&&[...n.querySelectorAll("*")].some(c=>le(c,r))))continue;let o=new Error("frame-visible"),a=(n.id?"#".concat(n.id):n.getAttribute("title")||"").replace(/[\r\n\t]/g," ").slice(0,100);throw o.element="".concat(n.localName).concat(a?" (".concat(a,")"):""),o.page=t.length>1?t.indexOf(r)+1:null,o}}async function fe(e,t,n=4e6){let r=new e.AbortController,i=e.setTimeout(()=>r.abort(),15e3),o;try{let a=await e.fetch(t,{credentials:"same-origin",signal:r.signal}),c=Number(a.headers?.get("content-length"));if(!a.ok||c>n||!a.body?.getReader)throw new Error("assets");o=a.body.getReader();let p=new e.TextDecoder,C=0,l="";for(;;){let{value:x,done:b}=await o.read();if(b)break;if(C+=x.byteLength,C>n)throw new Error("assets");l+=p.decode(x,{stream:!0})}return l+p.decode()}finally{r.abort(),e.clearTimeout(i);try{await o?.cancel()}catch{}o?.releaseLock()}}var ue="http://www.w3.org/2000/svg",ye="http://www.w3.org/1999/xlink",it="http://www.w3.org/XML/1998/namespace",sr="http://www.w3.org/2000/xmlns/";var Te="defs,symbol,clipPath,mask,pattern,marker,linearGradient,radialGradient,filter,template",ke=new Set(["use","lineargradient","radialgradient","pattern","textpath","feimage"]),ar=new Set("svg g defs symbol use path rect circle ellipse line polyline polygon text tspan textpath lineargradient radialgradient stop clippath mask pattern marker filter feblend fecolormatrix fecomponenttransfer fecomposite feconvolvematrix fediffuselighting fedisplacementmap fedistantlight fedropshadow feflood fefunca fefuncb fefuncg fefuncr fegaussianblur feimage femerge femergenode femorphology feoffset fepointlight fespecularlighting fespotlight fetile feturbulence title desc".split(" ")),Le=new Set("color fill fill-opacity fill-rule stroke stroke-width stroke-opacity stroke-linecap stroke-linejoin stroke-miterlimit stroke-dasharray stroke-dashoffset opacity display visibility overflow vector-effect paint-order shape-rendering text-rendering color-rendering color-interpolation color-interpolation-filters image-rendering clip-rule clip-path mask mask-type filter stop-color stop-opacity flood-color flood-opacity lighting-color font font-family font-size font-style font-weight font-stretch font-variant font-kerning letter-spacing word-spacing text-anchor text-decoration dominant-baseline alignment-baseline baseline-shift writing-mode direction unicode-bidi transform transform-origin transform-box marker marker-start marker-mid marker-end x y width height cx cy r rx ry d white-space text-transform mix-blend-mode isolation".split(" ")),T=e=>{throw new Error(e)},Ue=e=>[e,...e.querySelectorAll("*")],Pe=e=>e.getAttribute("href")??e.getAttributeNS(ye,"href")??e.getAttribute("xlink:href"),st=(e,t)=>{e.setAttribute("href",t),e.setAttributeNS(ye,"xlink:href",t)},$e=e=>{e.removeAttribute("href"),e.removeAttributeNS(ye,"href"),e.removeAttribute("xlink:href")},Ie=e=>e.replace(/\\([\da-f]{1,6}\s?|[^\r\n\f])/gi,(t,n)=>{if(!/^[\da-f]/i.test(n))return n;let r=parseInt(n.trim(),16);return String.fromCodePoint(r&&r<=1114111?r:65533)});function at(e){let t=e.replace(/\/\*[\s\S]*?\*\//g,""),n=[];for(let i=0;i<t.length;){let o=i,a=t[i]==="\\"&&/^\\([\da-f]{1,6}\s?|[^\r\n\f])/i.exec(t.slice(i));a?(i+=a[0].length,n.push({char:Ie(a[0]),escaped:!0,start:o,end:i})):n.push({char:t[i++],escaped:!1,start:o,end:i})}let r=[];for(let i=0;i<n.length;i++){if(/[\w\u0080-\uffff-]/.test(n[i-1]?.char||"")||n.slice(i,i+3).map(p=>p.char).join("").toLowerCase()!=="url")continue;let o=i+3;for(;/\s/.test(n[o]?.char||"")&&!n[o]?.escaped;)o++;if(n[o]?.char!=="("||n[o]?.escaped)continue;for(o++;/\s/.test(n[o]?.char||"")&&!n[o]?.escaped;)o++;let a=/["']/.test(n[o]?.char||"")&&!n[o]?.escaped?n[o++].char:null,c="";for(;o<n.length&&!(n[o].char===(a||")")&&!n[o].escaped);)c+=n[o++].char;for(a&&o++;/\s/.test(n[o]?.char||"")&&!n[o]?.escaped;)o++;(n[o]?.char!==")"||n[o]?.escaped||!c.trim()||/[\r\n\f]/.test(c))&&T("svg-unsafe"),r.push({start:n[i].start,end:n[o].end,url:c.trim()}),i=o}return{decoded:t,result:r}}function cr(e,t){let n=r=>{let i;try{i=new URL(r.trim(),t)}catch{T("svg-unsafe")}(!["http:","https:","file:","blob:"].includes(i.protocol)||i.username||i.password)&&T("svg-unsafe"),i.hash||T("svg-missing")};for(let r of Ue(e)){let i=r.localName.toLowerCase();(r.namespaceURI!==ue||!ar.has(i))&&T("svg-unsafe");for(let o of r.attributes){if(o.localName==="style"||Le.has(o.localName)){let a=Ie(o.value.replace(/\/\*[\s\S]*?\*\//g,""));/(?:^|[^\w-])(?:image-set|-webkit-image-set|image|cross-fade|-webkit-cross-fade|element|-moz-element|paint|src)\s*\(/i.test(a)&&T("svg-unsafe")}if((/^on/i.test(o.localName)||o.namespaceURI&&![ye,it,sr].includes(o.namespaceURI)||o.namespaceURI===it&&o.localName==="base")&&T("svg-unsafe"),o.localName==="href"&&(ke.has(i)||T("svg-unsafe"),o.value.trim()&&n(o.value)),o.localName==="style"){let a=Ie(o.value.replace(/\/\*[\s\S]*?\*\//g,""));/[{}@]|expression\s*\(/i.test(a)&&T("svg-unsafe");for(let c of a.split(";").filter(p=>p.trim())){let p=c.indexOf(":"),C=c.slice(0,p).trim().toLowerCase();(p<0||!(Le.has(C)||/^--[\w-]+$/.test(C)))&&T("svg-unsafe")}}if(/url|\\/i.test(o.value))for(let a of at(o.value).result)n(a.url)}}}function lr(e){let t=[],n=new Map,r=0,i=0,o=c=>!c||(e.defaultView?.matchMedia?e.defaultView.matchMedia(c).matches:c!=="print"),a=(c,p=0)=>{if(p>32&&T("svg-size"),c.disabled||!o(c.media?.mediaText))return;let C;try{C=c.cssRules}catch{return}for(let l of C||[])if(++r>2e4&&T("svg-size"),l.selectorText&&l.style)t.push(l);else if(l.styleSheet)a(l.styleSheet,p+1);else if(l.cssRules&&o(l.media?.mediaText)){if(l.constructor?.name==="CSSSupportsRule"&&e.defaultView?.CSS?.supports&&!e.defaultView.CSS.supports(l.conditionText))continue;a(l,p+1)}};for(let c of e.styleSheets||[])a(c);return c=>{if(n.has(c))return n.get(c);let p=new Map;for(let x of t){++i>2e6&&T("svg-size");let b;try{b=c.matches(x.selectorText)}catch{continue}if(b)for(let y=0;y<x.style.length;y++){let h=x.style[y];!Le.has(h)&&!h.startsWith("--")||(p.has(h)||p.set(h,[]),p.get(h).push(x.style.getPropertyValue(h).trim()))}}let C=p.size?e.defaultView?.getComputedStyle?.(c):null,l=[];for(let[x,b]of p){let y=c.style?.getPropertyValue(x);y&&b.push(y.trim());let h=b[0],u=b.every(m=>m===h)?h:C?.getPropertyValue(x);u&&l.push([x,u])}return n.set(c,l),l}}function fr(e,t,n){if(e.closest(Te))return!1;let r;for(let i=e;i;i=i.parentElement){if(i.hasAttribute("hidden")||i.hasAttribute("data-pageon-export-ignore"))return!1;let o=n.defaultView?.getComputedStyle?.(i)||i.style;if(o?.display==="none"||o?.contentVisibility==="hidden"||o?.opacity==="0")return!1;if(i===e&&(r=o?.visibility),i===t)break}return r!=="hidden"&&r!=="collapse"}async function ct(e,t,n,{shouldCapture:r}={}){let i=[...new Set(t||[e.documentElement])].filter(Boolean),o=new URL(e.baseURI);o.hash="";let a={doc:e,url:o.href,external:!1},c=new Map([[o.href,Promise.resolve(a)]]);for(let s of[e.URL,e.defaultView?.frameElement?.ownerDocument?.URL]){if(!s||s.startsWith("about:"))continue;let d=new URL(s);d.hash="",c.set(d.href,Promise.resolve(a))}let p=new Map,C=new Set,l=[],x=0,b=0,y=0,h,u=()=>{let s;do s="pageon-export-svg-".concat(++x);while(e.getElementById(s));return s},m=async s=>(c.has(s)||(++y>16&&T("svg-size"),c.set(s,(async()=>{let d;try{d=await n(s)}catch{T("svg-unavailable")}typeof d!="string"&&T("svg-unavailable"),d.length>1e6&&T("svg-size"),/<!\s*(?:DOCTYPE|ENTITY)|<\?\s*xml-stylesheet/i.test(d)&&T("svg-unsafe");let w=e.defaultView?.DOMParser||globalThis.DOMParser;w||T("svg-unavailable");let g;try{g=new w().parseFromString(d,"image/svg+xml")}catch{T("svg-unsafe")}return(g.documentElement?.namespaceURI!==ue||g.documentElement?.localName!=="svg"||g.getElementsByTagNameNS("*","parsererror").length)&&T("svg-unsafe"),g.getElementsByTagName("*").length>2e4&&T("svg-size"),cr(g.documentElement,s),{doc:g,url:s,external:!0}})())),c.get(s)),f=async(s,d)=>{let w;try{w=new URL(s.trim(),d.url)}catch{T("svg-unsafe")}(!["http:","https:","file:","blob:"].includes(w.protocol)||w.username||w.password)&&T("svg-unsafe");let g;try{g=decodeURIComponent(w.hash.slice(1))}catch{T("svg-missing")}g||T("svg-missing"),w.hash="";let v=w.href===d.url?d:await m(w.href),A=v.doc.getElementById(g);return(!A||A.namespaceURI!==ue)&&T("svg-missing"),{record:v,target:A}},S=s=>{if(!p.has(s)){let d=e.createElementNS(ue,"defs");d.setAttribute("data-pageon-svg-definitions",""),p.set(s,{svg:s,defs:d,definitions:new Map})}return p.get(s)},R=async(s,d,w,g)=>{g>32&&T("svg-size");let v=w.definitions.get(s);v||w.definitions.set(s,v=new Map);let A=v.get(d);if(A)return A.done||T("svg-cycle"),A.id;let P=Ue(d);b+=P.length,b>2e4&&T("svg-size");let V=e.importNode(d,!0),q=Ue(V),$=new Map,U=new Set,k=0;P.forEach((L,M)=>{let D=q[M],z=L.hasAttribute("id")||L===d?u():null;z&&D.setAttribute("id",z),$.set(L,{copy:D,id:z,state:0})});let I={id:$.get(d).id,done:!1};v.set(d,I);let N=async L=>{let{record:M,target:D}=await f(L,s),z=M===s&&$.get(D);return z?(await se(D,!0),z.id):R(M,D,w,g+1)},H=async L=>{let{decoded:M,result:D}=at(L);if(!D.length)return L;let z=M;for(let B of D.reverse()){if(!s.external&&/^data:/i.test(B.url))continue;let F=await N(B.url);z=z.slice(0,B.start)+'url("#'.concat(F,'")')+z.slice(B.end)}return z},se=async(L,M=!1)=>{if(!M&&L!==d){if(L.matches(Te))return;let F=s.external?L.style:e.defaultView?.getComputedStyle?.(L)||L.style;if(F?.display==="none"||F?.opacity==="0")return}let D=$.get(L);if(D.state===2)return;D.state===1&&T("svg-cycle"),++k>32&&T("svg-size"),D.state=1;let z=L.localName.toLowerCase(),B=Pe(L);ke.has(z)&&B?.trim()&&(st(D.copy,"#".concat(await N(B))),U.add(D.copy),z==="use"&&C.add(D.copy));for(let F of[...L.attributes])if(!(F.localName==="href"||F.localName==="id")){if(/url|\\/i.test(F.value)){let X=await H(F.value);X!==F.value&&D.copy.setAttributeNS(F.namespaceURI,F.name,X)}["aria-labelledby","aria-describedby"].includes(F.name)&&D.copy.setAttribute(F.name,F.value.split(/\s+/).map(X=>$.get(s.doc.getElementById(X))?.id||X).join(" "))}if(!s.external){h||(h=lr(e));for(let[F,X]of h(L))D.copy.style.setProperty(F,await H(X),"important")}for(let F of L.children)await se(F);D.state=2,k--};await se(d,!0);for(let L of q)ke.has(L.localName.toLowerCase())&&!U.has(L)&&$e(L);return w.defs.append(V),I.done=!0,I.id},E=new Map;for(let s of i)for(let d of[s,...s.querySelectorAll("use")])d.namespaceURI!==ue||d.localName.toLowerCase()!=="use"||E.has(d)||E.set(d,s);for(let[s,d]of E)try{if(s.closest(Te)||!(r?r(s,d):fr(s,d,e)))continue;let w=Pe(s);if(!w?.trim()){$e(s);continue}let g=s.closest("svg");g||T("svg-missing");let{record:v,target:A}=await f(w,a),P=S(g),V=await R(v,A,P,0);l.push({use:s,id:V}),C.add(s)}catch(w){let g=s.closest("svg"),v=s.getAttribute("aria-label")||g?.getAttribute("aria-label")||s.id||g?.id,A="";try{let P=new URL(Pe(s),a.url);A=P.pathname.split("/").pop()+P.hash}catch{}throw w.element=("SVG "+(v||A||"use")).replace(/\s+/g," ").slice(0,180),d!==e.documentElement&&(w.page=i.indexOf(d)+1),w}for(let{svg:s,defs:d}of p.values())d.childNodes.length&&s.append(d);for(let{use:s,id:d}of l)st(s,"#".concat(d));for(let s of E.keys())C.has(s)||$e(s)}function lt(e){if(!Array.isArray(e)||e.length===0||e.length>1e4)throw new RangeError("PDF requires between 1 and 10000 pages.");function t(h,u){let m=()=>new TypeError("Page ".concat(u+1," has an invalid or unsupported JPEG."));if(!(h instanceof Uint8Array)||h.length<4||h[0]!==255||h[1]!==216)throw m();let f=2,S,R=!1,E=0;for(;f<h.length;){if(R){let g=!1;for(;f<h.length;){if(h[f]!==255){f++,g=!0;continue}let v=f+1;for(;h[v]===255;)v++;if(h[v]===0||h[v]>=208&&h[v]<=215){f=v+1,g=!0;continue}break}if(!g)throw m();R=!1}if(h[f++]!==255)throw m();for(;h[f]===255;)f++;let s=h[f++];if(s===217){if(!S||!E||f!==h.length)throw m();return S}if(s===1)continue;if(s===void 0||s===0||s===216||s>=208&&s<=215||f+2>h.length)throw m();let d=h[f]*256+h[f+1];if(d<2||f+d>h.length)throw m();if(s>=192&&s<=207&&![196,200,204].includes(s)){if(S||![192,193,194].includes(s)||d<8)throw m();let g=h[f+2],v=h[f+3]*256+h[f+4],A=h[f+5]*256+h[f+6],P=h[f+7];if(g!==8||!A||!v||![1,3].includes(P)||d!==8+3*P)throw m();S={width:A,height:v,components:P}}if(s===218){let g=h[f+2];if(!S||!g||g>S.components||d!==6+2*g)throw m();E++,R=!0}f+=d}throw m()}function n(h){let u=String(h);if(!u.includes("e"))return u;let[m,f]=u.split("e"),S=m.replace(".","");return"0.".concat("0".repeat(-Number(f)-1)).concat(S)}let r=Array.from(e,(h,u)=>{if(!h||typeof h.width!="number"||typeof h.height!="number"||!Number.isFinite(h.width)||!Number.isFinite(h.height)||h.width<=0||h.height<=0)throw new RangeError("Page ".concat(u+1," requires finite, positive CSS dimensions."));let m=h.width*.75,f=h.height*.75;if(m<=0||f<=0||m>14400||f>14400)throw new RangeError("Page ".concat(u+1," exceeds the supported PDF page dimensions (maximum 14400 points)."));return{...t(h.jpeg,u),pageWidth:n(m),pageHeight:n(f),jpeg:h.jpeg}}),i=new TextEncoder,o=[],a=[0],c=0;function p(h){let u=typeof h=="string"?i.encode(h):h;if(c+u.byteLength>2147483647)throw new RangeError("PDF exceeds the supported file size.");o.push(u),c+=u.byteLength}function C(h,u,m){a[h]=c,p("".concat(h," 0 obj\n").concat(u)),m!==void 0&&(p("\nstream\n"),p(m),p("\nendstream")),p("\nendobj\n")}p("%PDF-1.4\n"),p(new Uint8Array([37,226,227,207,211,10])),C(1,"<< /Type /Catalog /Pages 2 0 R >>");let l=r.map((h,u)=>"".concat(3+u*3," 0 R")).join(" ");C(2,"<< /Type /Pages /Count ".concat(r.length," /Kids [").concat(l,"] >>")),r.forEach((h,u)=>{let m=3+u*3,{pageWidth:f,pageHeight:S,width:R,height:E,components:s,jpeg:d}=h;C(m,"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ".concat(f," ").concat(S,"] /Resources << /XObject << /Im0 ").concat(m+1," 0 R >> >> /Contents ").concat(m+2," 0 R >>")),C(m+1,"<< /Type /XObject /Subtype /Image /Width ".concat(R," /Height ").concat(E," /ColorSpace /Device").concat(s===1?"Gray":"RGB"," /BitsPerComponent 8 /Filter /DCTDecode /Length ").concat(d.byteLength," >>"),d);let w=i.encode("q\n".concat(f," 0 0 ").concat(S," 0 0 cm\n/Im0 Do\nQ\n"));C(m+2,"<< /Length ".concat(w.byteLength," >>"),w)});let x=c;p("xref\n0 ".concat(a.length,"\n0000000000 65535 f \n"));for(let h=1;h<a.length;h++)p("".concat(String(a[h]).padStart(10,"0")," 00000 n \n"));p("trailer\n<< /Size ".concat(a.length," /Root 1 0 R >>\nstartxref\n").concat(x,"\n%%EOF\n"));let b=new Uint8Array(c),y=0;for(let h of o)b.set(h,y),y+=h.byteLength;return b}var ur="[data-pageon-capture-root]",hr=128,ft=16,ut=4e6,_=()=>new Error("assets"),J=e=>e.replace(/\\([\da-f]{1,6}\s?|[^\r\n\f])/gi,(t,n)=>{if(!/^[\da-f]/i.test(n))return n;let r=parseInt(n.trim(),16);return r>0&&r<=1114111?String.fromCodePoint(r):"\uFFFD"}),Y=(e,t)=>{let n=e.slice(t+1).match(/^[\da-f]{1,6}\s?/i);return t+1+(n?n[0].length:1)},G=(e,t)=>{let n=e[t++];for(;t<e.length;)if(e[t]==="\\")t=Y(e,t);else if(e[t++]===n)return t;throw _()},Q=(e,t)=>{let n=e.indexOf("*/",t+2);if(n<0)throw _();return n+2},we=(e,t)=>{for(;t<e.length;)if(e[t]==="\\")t=Y(e,t);else if(/[-\w\u0080-\uffff]/.test(e[t]))t++;else break;return t};function Me(e){let t="",n=0;for(let r=0;r<e.length;){let i=e[r];if(i==='"'||i==="'"){let o=G(e,r);t+=e.slice(r,o),r=o}else if(i==="/"&&e[r+1]==="*"){let o=Q(e,r);t+=e.slice(r,o),r=o}else if(i==="\\"){let o=Y(e,r);t+=e.slice(r,o),r=o}else if(i===":"&&!n&&e[r-1]!==":"){let o=we(e,r+1);J(e.slice(r+1,o)).toLowerCase()==="root"&&e[o]!=="("?t+=ur:t+=e.slice(r,o),r=o}else i==="["&&n++,i==="]"&&n--,t+=i,r++}return t}function K(e,t){let n=1;for(let r=t+1;r<e.length;)if(e[r]==='"'||e[r]==="'")r=G(e,r);else if(e[r]==="/"&&e[r+1]==="*")r=Q(e,r);else if(e[r]==="\\")r=Y(e,r);else{if(e[r]==="("&&n++,e[r]===")"&&!--n)return r+1;r++}throw _()}function De(e,t){let n="";for(let r=0;r<e.length;)if(e[r]==='"'||e[r]==="'"){let i=G(e,r);n+=e.slice(r,i),r=i}else if(e[r]==="/"&&e[r+1]==="*"){let i=Q(e,r);n+=e.slice(r,i),r=i}else if(e[r]==="\\"||/[-\w\u0080-\uffff]/.test(e[r])){let i=we(e,r),o=J(e.slice(r,i));if(["image-set","-webkit-image-set"].includes(o.toLowerCase())&&e[i]==="("){let C=K(e,i),l=e.slice(i+1,C-1),x="",b=0;for(let y=0;y<=l.length;)if(y===l.length||l[y]===","){let h=l.slice(b,y),u=h.match(/^\s*/)[0].length;if(h[u]==='"'||h[u]==="'"){let m=G(h,u),f=J(h.slice(u+1,m-1)),S;try{S=new URL(f,t).href}catch{throw _()}h=h.slice(0,u)+JSON.stringify(S)+h.slice(m)}x+=De(h,t)+(y<l.length?",":""),b=++y}else l[y]==='"'||l[y]==="'"?y=G(l,y):l[y]==="("?y=K(l,y):l[y]==="/"&&l[y+1]==="*"?y=Q(l,y):l[y]==="\\"?y=Y(l,y):y++;n+=e.slice(r,i+1)+x+")",r=C;continue}if(o.toLowerCase()!=="url"||e[i]!=="("){n+=e.slice(r,i),r=i;continue}let a=K(e,i),c=e.slice(i+1,a-1).trim(),p=J(/^(['"])[\s\S]*\1$/.test(c)?c.slice(1,-1):c);if(!p||p.startsWith("#")||/^(data|blob):/i.test(p))n+=e.slice(r,a);else{let C;try{C=new URL(p,t).href}catch{throw _()}n+="url(".concat(JSON.stringify(C),")")}r=a}else n+=e[r++];return n}function mr(e){let t=[],n="",r=0,i=0;for(let o=0;o<e.length;){if(e[o]==='"'||e[o]==="'"){o=G(e,o);continue}if(e[o]==="/"&&e[o+1]==="*"){o=Q(e,o);continue}if(e[o]==="\\"){o=Y(e,o);continue}if(e[o]==="{"&&i++,e[o]==="}"&&i--,!i&&e[o]==="@"){let a=we(e,o+1);if(J(e.slice(o+1,a)).toLowerCase()==="import"){let c=a;for(;c<e.length&&e[c]!==";";)e[c]==='"'||e[c]==="'"?c=G(e,c):e[c]==="/"&&e[c+1]==="*"?c=Q(e,c):e[c]==="("?c=K(e,c):e[c]==="\\"?c=Y(e,c):c++;if(c>=e.length)throw _();t.push(e.slice(a,c).trim()),n+=e.slice(r,o),r=c+1,o=r;continue}}o++}return{css:n+e.slice(r),imports:t}}function dr(e){let t="";for(let n=0;n<e.length;)if(e[n]==='"'||e[n]==="'"){let r=G(e,n);t+=e.slice(n,r),n=r}else e[n]==="/"&&e[n+1]==="*"?(n=Q(e,n),t+=" "):t+=e[n++];return t}function ht(e){let t=dr(e).trim(),n,r;if(t[0]==='"'||t[0]==="'"){let a=G(t,0);n=t.slice(1,a-1),r=t.slice(a).trim()}else{let a=we(t,0);if(J(t.slice(0,a)).toLowerCase()!=="url"||t[a]!=="(")throw _();let c=K(t,a),p=t.slice(a+1,c-1).trim();n=/^(['"])[\s\S]*\1$/.test(p)?p.slice(1,-1):p,r=t.slice(c).trim()}let i=null,o=null;if(/^layer(?:\s|\(|$)/i.test(r)&&(r=r.slice(5).trimStart(),i="",r[0]==="(")){let a=K(r,0);i=r.slice(1,a-1).trim(),r=r.slice(a).trim()}if(/^supports\(/i.test(r)){let a=r.indexOf("("),c=K(r,a);o=r.slice(a+1,c-1).trim(),r=r.slice(c).trim()}return{url:J(n),layer:i,supports:o,media:r}}function pr(e,t){if(t.media&&t.media!=="all"&&(e="@media ".concat(t.media,"{").concat(e,"}")),t.supports){let n=Me(t.supports);/^(?:\(|not\s|selector\(|font-tech\(|font-format\()/i.test(n)||(n="(".concat(n,")")),e="@supports ".concat(n,"{").concat(e,"}")}return t.layer!==null&&(e="@layer".concat(t.layer?" "+t.layer:"","{").concat(e,"}")),e}async function mt({doc:e,root:t,window:n=e.defaultView,shadow:r,fetchText:i=o=>fe(n,o)}){let o=0,a=0,c=new Map,p=m=>!m||!n.matchMedia||n.matchMedia(m).matches,C=[...e.styleSheets,...e.adoptedStyleSheets||[]],l=m=>{if(m>ft||++o>hr)throw _()},x=async(m,f,S)=>{if(S.has(m))return"";l(f),c.has(m)||c.set(m,(async()=>{let v;try{v=await i(m)}catch{throw _()}if(typeof v!="string"||v.length>ut||(a+=v.length)>ut*4)throw _();return v})());let R=await c.get(m),E=new Set(S);E.add(m);let{css:s,imports:d}=mr(R),w="";for(let v of d)w+=await b(ht(v),m,f+1,E);let g;try{g=new n.CSSStyleSheet,g.replaceSync(s)}catch{throw _()}return w+await y(g.cssRules,m,f,E)},b=async(m,f,S,R,E)=>{if(!p(m.media))return"";if(m.supports&&n.CSS?.supports){let g=/^(?:\(|not\s|selector\(|font-tech\(|font-format\()/i.test(m.supports)?m.supports:"(".concat(m.supports,")");if(!n.CSS.supports(g))return""}let s;try{s=new URL(m.url,f).href}catch{throw _()}if(R.has(s))return"";let d;try{d=E?.cssRules}catch{}let w;if(d){l(S);let g=new Set(R);g.add(s),w=await y(d,s,S,g)}else w=await x(s,S,R);return pr(w,m)},y=async(m,f,S,R)=>{if(S>ft)throw _();let E="";for(let s of Array.from(m||[]))if(s.type===3){let d=s.cssText.replace(/^@import\s*/i,"").replace(/;\s*$/,"");E+=await b(ht(d),f,S+1,R,s.styleSheet)}else if(s.selectorText!==void 0){let d=Me(s.selectorText),w=s.cssRules?.length?await y(s.cssRules,f,S+1,R):"";E+="".concat(d,"{").concat(De(s.style.cssText,f)).concat(w,"}")}else if(s.cssRules){let d=s.cssText.slice(0,s.cssText.indexOf("{")).trim();E+="".concat(Me(d),"{").concat(await y(s.cssRules,f,S+1,R),"}")}else E+=De(s.cssText,f);return E},h="";for(let m of C){if(m.disabled||!p(m.media?.mediaText))continue;l(0);let f;try{f=m.cssRules}catch{}let S=m.href||e.baseURI,R=new Set(m.href?[m.href]:[]),E;if(f)E=await y(f,S,0,R);else if(m.href)E=await x(m.href,0,new Set);else throw _();h+=m.media?.mediaText?"@media ".concat(m.media.mediaText,"{").concat(E,"}"):E}t.setAttribute("data-pageon-capture-root",""),t.querySelectorAll('style:not([data-pageon-capture-guard]),link[rel~="stylesheet"]').forEach(m=>m.remove()),r&&"adoptedStyleSheets"in r&&(r.adoptedStyleSheets=[]);let u=e.createElement("style");u.setAttribute("data-pageon-capture-styles",""),u.textContent=h,t.querySelector("head").prepend(u);try{if(h.trim()&&!u.sheet)throw _()}catch{throw u.remove(),_()}return h}var Ve="script,noscript,pageon-runtime,pageon-advanced-runtime,artifact-studio-runtime,[data-pageon-extension],[data-pageon-drag-overlay],[data-pageon-text-overlay],[data-pageon-export-ignore]",dt="[data-pageon-export-page],.slide,[data-slide]:not(button):not(a),.reveal .slides section",gr=32e6,pt=16384,yr=15e3,wr={en:{image:"Export image",pdf:"Export PDF",busy:"Exporting\u2026",done:"Export downloaded",failed:"Export failed. Please try again.",assets:"An image or font could not be loaded. Check your connection and whether the original assets allow export.",size:"This document is too large to export safely. Try PDF or split it into smaller files.","frame-visible":"A visible embedded page cannot be captured. Replace it with an image, or explicitly exclude it with data-pageon-export-ignore.","svg-unavailable":"An SVG icon could not be read. Check its URL, your connection, and the server\u2019s CORS permissions.","svg-missing":"An SVG icon references a missing symbol. Check the symbol ID or inline the SVG.","svg-unsafe":"An SVG icon contains unsupported active or external content. Use a static inline SVG or image.","svg-cycle":"An SVG icon has cyclic references. Use a flattened SVG or image.","svg-size":"An SVG icon is too large or has excessive nested references. Use a smaller flattened SVG or image."},zh:{image:"\u5BFC\u51FA\u56FE\u7247",pdf:"\u5BFC\u51FA PDF",busy:"\u6B63\u5728\u5BFC\u51FA\u2026",done:"\u5DF2\u4E0B\u8F7D\u5BFC\u51FA\u6587\u4EF6",failed:"\u5BFC\u51FA\u5931\u8D25\uFF0C\u8BF7\u91CD\u8BD5\u3002",assets:"\u56FE\u7247\u6216\u5B57\u4F53\u672A\u80FD\u52A0\u8F7D\u3002\u8BF7\u68C0\u67E5\u7F51\u7EDC\uFF0C\u4EE5\u53CA\u539F\u7D20\u6750\u662F\u5426\u5141\u8BB8\u5BFC\u51FA\u3002",size:"\u6587\u6863\u8FC7\u5927\uFF0C\u65E0\u6CD5\u5B89\u5168\u5BFC\u51FA\u3002\u8BF7\u5C1D\u8BD5 PDF\uFF0C\u6216\u62C6\u5206\u4E3A\u8F83\u5C0F\u6587\u4EF6\u3002","frame-visible":"\u5BFC\u51FA\u5185\u5BB9\u4E2D\u5305\u542B\u53EF\u89C1\u7684\u5D4C\u5165\u7F51\u9875\uFF0C\u6682\u65F6\u65E0\u6CD5\u622A\u53D6\u3002\u8BF7\u66FF\u6362\u4E3A\u56FE\u7247\uFF0C\u6216\u660E\u786E\u6DFB\u52A0 data-pageon-export-ignore \u6392\u9664\u3002","svg-unavailable":"\u65E0\u6CD5\u8BFB\u53D6 SVG \u56FE\u6807\uFF0C\u8BF7\u68C0\u67E5\u5730\u5740\u3001\u7F51\u7EDC\u53CA\u670D\u52A1\u5668\u7684 CORS \u8DE8\u57DF\u8BB8\u53EF\u3002","svg-missing":"SVG \u56FE\u6807\u5F15\u7528\u7684\u7B26\u53F7\u4E0D\u5B58\u5728\uFF0C\u8BF7\u68C0\u67E5\u7B26\u53F7 ID \u6216\u6539\u7528\u5185\u5D4C SVG\u3002","svg-unsafe":"SVG \u56FE\u6807\u5305\u542B\u4E0D\u652F\u6301\u7684\u52A8\u6001\u6216\u5916\u90E8\u5185\u5BB9\uFF0C\u8BF7\u6539\u7528\u9759\u6001\u5185\u5D4C SVG \u6216\u56FE\u7247\u3002","svg-cycle":"SVG \u56FE\u6807\u5B58\u5728\u5FAA\u73AF\u5F15\u7528\uFF0C\u8BF7\u6539\u7528\u5C55\u5F00\u540E\u7684 SVG \u6216\u56FE\u7247\u3002","svg-size":"SVG \u56FE\u6807\u8FC7\u5927\u6216\u5D4C\u5957\u5F15\u7528\u8FC7\u591A\uFF0C\u8BF7\u6539\u7528\u8F83\u5C0F\u4E14\u5DF2\u5C55\u5F00\u7684 SVG \u6216\u56FE\u7247\u3002"}},he=(e,t)=>Object.entries(t).forEach(([n,r])=>e.style.setProperty(n,r,"important")),Z=(e,t,n=yr)=>new Promise((r,i)=>{let o=t.setTimeout(()=>i(new Error("assets")),n);Promise.resolve(e).then(a=>{t.clearTimeout(o),r(a)},a=>{t.clearTimeout(o),i(a)})});function br(e){let t=[...e.querySelectorAll(dt)].filter(r=>!r.closest(Ve)&&!r.closest('[data-artifact-no-reveal],[role="dialog"],[aria-modal="true"]'));return t.filter(r=>!t.some(i=>i!==r&&r.contains(i))).filter(r=>r.hasAttribute("data-pageon-export-page")||[...r.parentElement.children].filter(i=>i.matches(dt)).length>1||r.closest(".reveal .slides"))}function Sr(e,t){let n=i=>!i||i==="transparent"||i==="rgba(0, 0, 0, 0)",r=t.getComputedStyle(e);if(r.backgroundImage&&r.backgroundImage!=="none"||!n(r.backgroundColor))return{};for(let i=e.parentElement;i;i=i.parentElement){let o=t.getComputedStyle(i);if(o.backgroundImage&&o.backgroundImage!=="none")return Object.fromEntries(["background-image","background-size","background-position","background-repeat","background-origin","background-clip"].map(a=>[a,o.getPropertyValue(a)]));if(!n(o.backgroundColor))return{}}return{}}function xr(e,t,n="frame"){let r=br(e),i=r.map(u=>{let m=t.getComputedStyle(u),f=r.find(s=>s.parentElement===u.parentElement&&s.getBoundingClientRect().width>0),S=f?t.getComputedStyle(f):null,R=t.getComputedStyle(u.parentElement),E=(s,d)=>{if(!s)return 0;let w=/px$/.test(s[d])?parseFloat(s[d]):0;if(!w)return 0;let g=d==="width"?["Left","Right"]:["Top","Bottom"];return w+(s.boxSizing==="border-box"?0:g.reduce((v,A)=>v+(parseFloat(s["padding"+A])||0)+(parseFloat(s["border"+A+"Width"])||0),0))};return{width:E(m,"width")||E(S,"width")||E(R,"width")||t.innerWidth,height:E(m,"height")||E(S,"height")||E(R,"height")||t.innerHeight,display:[m.display,S?.display].find(s=>s&&s!=="none")||"block",backdrop:Sr(u,t)}}),o=e.documentElement.cloneNode(!0),a=[e.documentElement,...e.documentElement.querySelectorAll("*")],c=[o,...o.querySelectorAll("*")],p=r.map(u=>c[a.indexOf(u)]),C=[];a.forEach((u,m)=>{let f=c[m];if(u.localName==="canvas"&&!u.closest(Ve)){let S;try{S=u.toDataURL()}catch{}C.push({node:f,src:S,width:u.width,height:u.height})}u.localName==="img"&&(f.src=u.currentSrc||u.src,f.removeAttribute("srcset"),f.removeAttribute("sizes"),f.loading="eager"),u.localName==="input"&&(f.value=u.value,u.checked?f.setAttribute("checked",""):f.removeAttribute("checked")),u.localName==="textarea"&&(f.textContent=u.value),u.localName==="select"&&[...f.options].forEach((S,R)=>{S.selected=u.options[R].selected});for(let S of[...f.attributes])/^on/i.test(S.name)&&f.removeAttribute(S.name);for(let S of["contenteditable","data-artifact-selected","data-artifact-local-node"])f.removeAttribute(S)}),o.querySelectorAll(Ve).forEach(u=>u.remove()),o.querySelectorAll("picture source").forEach(u=>u.remove()),o.removeAttribute("data-artifact-mode"),o.removeAttribute("data-artifact-local-edit"),o.querySelectorAll('base,meta[http-equiv="refresh" i]').forEach(u=>u.remove());let l=e.createElement("base");l.href=e.baseURI,o.querySelector("head").prepend(l);let x=e.createElement("style");x.setAttribute("data-pageon-capture-guard",""),x.textContent="*,*::before,*::after{animation:none!important;transition:none!important;caret-color:transparent!important;scroll-behavior:auto!important}",o.querySelector("head").append(x);let b,y,h;try{if(n==="document"){y=e.createElement("pageon-export-snapshot"),y.setAttribute("data-pageon-extension",""),y.setAttribute("aria-hidden","true"),he(y,{all:"initial",position:"fixed",left:"-100000px",top:"0",display:"block",visibility:"visible",opacity:"1",width:"".concat(e.documentElement.clientWidth||t.innerWidth,"px"),height:"".concat(t.innerHeight,"px"),overflow:"visible",isolation:"isolate","pointer-events":"none"});let u=y.attachShadow({mode:"closed"});h=u;let m=t.getComputedStyle(e.documentElement);for(let f of Array.from(m))o.style.setProperty(f,m.getPropertyValue(f),m.getPropertyPriority(f));o.querySelectorAll("iframe").forEach(f=>{f.setAttribute("sandbox",""),f.setAttribute("srcdoc","")}),o.querySelectorAll("object,embed").forEach(f=>{f.removeAttribute("data"),f.removeAttribute("src"),f.setAttribute("type","application/x-pageon-export-blocked")}),u.append(o),e.adoptedStyleSheets?.length&&"adoptedStyleSheets"in u&&(u.adoptedStyleSheets=[...e.adoptedStyleSheets]),e.body.append(y),b={documentElement:o,head:o.querySelector("head"),body:o.querySelector("body"),defaultView:t,baseURI:e.baseURI,URL:e.URL,fonts:e.fonts,get styleSheets(){return[...o.querySelectorAll('style,link[rel~="stylesheet"]')].map(f=>f.sheet).filter(Boolean)},adoptedStyleSheets:[...e.adoptedStyleSheets||[]],querySelector:o.querySelector.bind(o),querySelectorAll:o.querySelectorAll.bind(o),getElementById:f=>[...o.querySelectorAll("[id]")].find(S=>S.id===f)||null,createElement:e.createElement.bind(e),createElementNS:e.createElementNS.bind(e),importNode:e.importNode.bind(e)}}else y=e.createElement("iframe"),y.setAttribute("data-pageon-extension",""),y.setAttribute("aria-hidden","true"),y.tabIndex=-1,y.setAttribute("sandbox","allow-same-origin"),y.style.cssText="position:fixed;left:-100000px;top:0;width:".concat(e.documentElement.clientWidth||t.innerWidth,"px;height:").concat(t.innerHeight,"px;border:0;pointer-events:none;"),e.body.append(y),b=y.contentDocument;if(!b)throw new Error("assets");if(n!=="document"){let u=b.createElement("meta");u.httpEquiv="Content-Security-Policy",u.content="frame-src 'none'; object-src 'none'",b.head.append(u),o.querySelector("head").prepend(u.cloneNode(!0)),b.replaceChild(b.adoptNode(o),b.documentElement)}return p.forEach((u,m)=>{let{width:f,height:S,display:R,backdrop:E}=i[m];for(let s=u.parentElement;s;s=s.parentElement)he(s,{position:"relative",inset:"auto",transform:"none",overflow:"visible",height:"auto","max-height":"none","content-visibility":"visible"}),s.removeAttribute("hidden"),s.removeAttribute("inert"),b.defaultView.getComputedStyle(s).display==="none"&&he(s,{display:"block"});u.removeAttribute("hidden"),u.removeAttribute("inert"),u.removeAttribute("aria-hidden"),he(u,{...E,position:"relative",inset:"auto",transform:"none",display:R,opacity:"1",visibility:"visible",width:"".concat(f,"px"),height:"".concat(S,"px"),"min-height":"".concat(S,"px"),"max-height":"none","max-width":"none",margin:"0","box-sizing":"border-box",overflow:"visible","content-visibility":"visible"}),u.querySelectorAll(".fragment").forEach(s=>he(s,{opacity:"1",visibility:"visible",transform:"none"}))}),{frame:y,doc:b,pages:p,canvases:C,sourceDocument:e,shadow:h}}catch(u){throw y?.remove(),u}}async function Er(e,t){let n=e.doc;e.shadow&&(await mt({doc:e.sourceDocument,root:n.documentElement,window:t,shadow:e.shadow}),n.adoptedStyleSheets=[]);let r=e.pages.length?e.pages:[n.documentElement],i=l=>le(l,ge(l,r));await Promise.all([...n.querySelectorAll('link[rel~="stylesheet"]')].map(l=>Z(new Promise((x,b)=>{if(l.sheet)return x();l.addEventListener("load",x,{once:!0}),l.addEventListener("error",()=>b(new Error("assets")),{once:!0})}),t))),Ae(n,r);for(let l of e.canvases){let x=i(l.node);if(x&&!l.src)throw new Error("assets");let b=n.createElement("img");for(let u of l.node.attributes)b.setAttribute(u.name,u.value);b.src=!x||l.src==="data:,"?'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/%3E':l.src,b.width=l.width,b.height=l.height;let y=n.defaultView.getComputedStyle(l.node);for(let u of y)b.style.setProperty(u,y.getPropertyValue(u),y.getPropertyPriority(u));let h=e.pages.indexOf(l.node);l.node.replaceWith(b),h>=0&&(e.pages[h]=b,r[h]=b)}let o=new Map,a=l=>{if(!l||l.startsWith("data:")||l.startsWith("#"))return Promise.resolve(l);let x=new URL(l,n.baseURI);if(x.hash&&x.href.split("#")[0]===new URL(n.baseURI).href.split("#")[0])return Promise.resolve(x.hash);let b=x.href;return o.has(b)||o.set(b,Z((async()=>{let y=await t.fetch(b,{credentials:"same-origin"});if(!y.ok)throw new Error("assets");let h=await y.blob();return await new Promise((u,m)=>{let f=new t.FileReader;f.onload=()=>u(f.result),f.onerror=()=>m(new Error("assets")),f.readAsDataURL(h)})})(),t)),o.get(b)},c=l=>fe(t,l);await Z(ct(n,r,l=>fe(t,l,1e6),{shouldCapture:i}),t),Ae(n,r),await Promise.all(ie(r,"img").filter(i).map(async l=>{l.src=await a(l.src),await Z(l.decode?l.decode():new Promise((x,b)=>{if(l.complete)return l.naturalWidth?x():b(new Error("assets"));l.onload=x,l.onerror=()=>b(new Error("assets"))}),t)})),await Promise.all(ie(r,"svg image").map(async l=>{let x=l.getAttribute("href")||l.getAttribute("xlink:href");if(x){let b=await a(x);l.setAttribute("href",b),l.setAttributeNS("http://www.w3.org/1999/xlink","href",b)}}));for(let l of ie(r,"svg,svg *")){if(l.closest("[data-pageon-svg-definitions]"))continue;let x=n.defaultView.getComputedStyle(l);for(let b of x)l.style.setProperty(b,x.getPropertyValue(b),x.getPropertyPriority(b))}let p=[],C=/url\(\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|((?:\\.|[^)\\])*))\s*\)/gi;if(await Promise.all(ie(r).map(async(l,x)=>{for(let b of[null,"::before","::after","::marker"]){if(!le(l,ge(l,r),n.defaultView,b))continue;let y=n.defaultView.getComputedStyle(l,b);if(!(b&&(!y.content||["none","normal"].includes(y.content))))for(let h of["background-image","mask-image","border-image-source","list-style-image",...b?["content"]:[]]){let u=y.getPropertyValue(h),m=[...u.matchAll(C)];if(!m.length)continue;let f=u;for(let S of m){let R=(S[1]??S[2]??S[3]).replace(/\\([\da-f]{1,6}\s?|[^\r\n\f])/gi,(E,s)=>/^[\da-f]/i.test(s)?String.fromCodePoint(parseInt(s.trim(),16)||65533):s);f=f.replace(S[0],'url("'.concat(await a(R),'")'))}b?(l.setAttribute("data-pageon-capture-id",String(x)),p.push('[data-pageon-capture-id="'.concat(x,'"]').concat(b,"{").concat(h,":").concat(f,"!important}"))):l.style.setProperty(h,f,"important")}}})),p.length){let l=n.createElement("style");l.textContent=p.join("\n"),n.head.append(l)}return n.fonts?.ready&&await Z(n.fonts.ready,t),await Z(nt(n,a,c,r),t)}function vr(e,t){let n=e===t.documentElement;return{width:Math.ceil(Math.max(e.scrollWidth,e.offsetWidth,n?t.body.scrollWidth:0)),height:Math.ceil(Math.max(e.scrollHeight,e.offsetHeight,n?t.body.scrollHeight:0))}}function Rr(e,t){for(let n=e;n;n=n.parentElement){let r=t.getComputedStyle(n).backgroundColor;if(r&&r!=="transparent"&&r!=="rgba(0, 0, 0, 0)")return r}return"#fff"}function gt(e,t){if(!(e>0)||!(t>0)||!Number.isFinite(e*t))throw new Error("size");let n=Math.min(2,pt/e,pt/t,Math.sqrt(gr/(e*t)));if(n<.25)throw new Error("size");return n}function yt({document:e,window:t,fileName:n="document.html",lang:r="en",downloadTarget:i=e.body,beforeCapture:o,onStatus:a=()=>{},onDownload:c,onRasterPage:p,snapshotMode:C="frame"}){let l=wr[String(r).startsWith("zh")?"zh":"en"],x=null,b=null,y=!1,h=(m,f)=>{let S=n.replace(/\.html?$/i,"")+"."+f;if(c)return c({blob:m,fileName:S,format:f});let R=t.URL.createObjectURL(m),E=e.createElement("a");E.href=R,E.download=S,E.setAttribute("data-pageon-extension",""),i.append(E),E.click(),E.remove(),t.setTimeout(()=>t.URL.revokeObjectURL(R),3e4)},u=m=>y?Promise.reject(new Error("runtime-destroyed")):x||(x=(async()=>{let f,S,R;a({busy:!0,message:l.busy});try{S=o?.(),f=xr(e,t,C),b=f,S?.(),S=null;let E=await Er(f,t);if(y)throw new Error("runtime-destroyed");let s=f.pages.length?f.pages:[f.doc.documentElement],d=s.map($=>vr($,f.doc)),w=Math.max(...d.map($=>$.width)),g=d.reduce(($,U)=>$+U.height,0);if(m==="pdf"&&d.some($=>Math.max($.width,$.height)>19200))throw new Error("size");let v=m==="png"?gt(w,g):null,A,P=0,V=[];if(m==="png"){if(R=e.createElement("canvas"),R.width=Math.floor(w*v),R.height=Math.floor(g*v),A=R.getContext("2d"),!A)throw new Error("size");A.fillStyle="#fff",A.fillRect(0,0,R.width,R.height)}for(let $=0;$<s.length;$++){if(y)throw new Error("runtime-destroyed");let U=d[$],k=await Z(rt(s[$],{...U,pixelRatio:v||gt(U.width,U.height),skipAutoScale:!0,fontEmbedCSS:E,backgroundColor:Rr(s[$],f.doc.defaultView)}),t,3e4);try{if(!k.width||!k.height)throw new Error("size");if(p&&await p({canvas:k,...U,index:$}),y)throw new Error("runtime-destroyed");if(m==="png"){let I=Math.floor(d.slice(0,$+1).reduce((N,H)=>N+H.height,0)*v);A.drawImage(k,0,P,Math.floor(U.width*v),I-P),P=I}else{let I=k.toDataURL("image/jpeg",.95).split(",")[1];if(!I)throw new Error("size");V.push({...U,imageWidth:k.width,imageHeight:k.height,jpeg:Uint8Array.from(t.atob(I),N=>N.charCodeAt(0))})}}finally{k.width=0,k.height=0}}if(y)throw new Error("runtime-destroyed");let q=m==="png"?await new Promise(($,U)=>R.toBlob(k=>k?$(k):U(new Error("size")),"image/png")):new t.Blob([lt(V)],{type:"application/pdf"});if(R&&(R.width=0,R.height=0),y)throw new Error("runtime-destroyed");return await h(q,m),a({busy:!1,message:l.done}),{format:m,pages:s.length,width:w,height:g}}catch(E){let s=l[E?.message]||l.failed;throw E?.element&&(s+=" [".concat(E.page?"".concat(String(r).startsWith("zh")?"\u7B2C":"Page ").concat(E.page).concat(String(r).startsWith("zh")?"\u9875 \xB7 ":" \xB7 "):"").concat(E.element,"]")),a({busy:!1,message:s,error:E}),new Error(s,{cause:E})}finally{try{S?.()}finally{f?.frame.remove(),b=null,R&&(R.width=0,R.height=0)}}})().finally(()=>{x=null}),x);return{exportImage:()=>u("png"),exportPdf:()=>u("pdf"),destroy:()=>{y=!0,b?.frame.remove()},labels:l}}return vt(Cr);})();
+
+return PageOnVisualExport.createVisualExporter;})(),function createFileSaver({ window: win, lang, fileName, isDestroyed = () => false, onStatus = () => {} }) {
+  const zh = lang === 'zh';
+  const labels = zh ? {
+    save: '保存', copy: '另存副本', export: '导出',
+    choose: '首次保存请在原文件夹中保留当前文件名，并确认覆盖。',
+    writing: '正在保存…', saved: '已保存到', cancelled: '已取消保存',
+    failed: '保存失败，原文件未确认更新。请重试或另存副本。',
+    downloaded: '已下载副本，原文件未更新。',
+  } : {
+    save: 'Save', copy: 'Save a copy', export: 'Export',
+    choose: 'For the first save, keep the current file name in its original folder and confirm replacement.',
+    writing: 'Saving…', saved: 'Saved to', cancelled: 'Save cancelled',
+    failed: 'Save failed; the original file has not been confirmed updated. Retry or save a copy.',
+    downloaded: 'Copy downloaded. The original file was not updated.',
+  };
+  const canSave = typeof win.showSaveFilePicker === 'function' && win.isSecureContext !== false && (!win.top || win.top === win);
+  let handle = null;
+  // The URL supplies a suggested name, never authority to access that path.
+  let localName = '';
+  if (win.location?.protocol === 'file:') {
+    try { localName = decodeURIComponent(win.location.pathname.split('/').pop()); } catch { /* Use the selected file name. */ }
+  }
+  const suggestedName = localName || String(fileName || 'document.html').split(/[\\/]/).pop() || 'document.html';
+  const save = async serialize => {
+    if (!canSave || isDestroyed()) return false;
+    let target = handle;
+    if (!target) {
+      onStatus(labels.choose);
+      try {
+        target = await win.showSaveFilePicker({
+          id: 'pageon-save-html', suggestedName,
+          types: [{ description: 'HTML', accept: { 'text/html': ['.html', '.htm'] } }],
+          excludeAcceptAllOption: true,
+        });
+      } catch (error) {
+        if (error.name === 'AbortError') { if (!isDestroyed()) onStatus(labels.cancelled); return false; }
+        throw error;
+      }
+    }
+    if (isDestroyed()) return false;
+    if (!target) throw new Error(labels.failed);
+    // Re-check write permission on every save; handles are session-local.
+    if (target.requestPermission && await target.requestPermission({ mode: 'readwrite' }) !== 'granted') {
+      const error = new Error(labels.failed); error.name = 'NotAllowedError'; throw error;
+    }
+    if (isDestroyed()) return false;
+    // Obtain permission before serializing: the picker needs user activation.
+    const artifact = serialize();
+    onStatus(labels.writing);
+    let writable;
+    try {
+      writable = await target.createWritable();
+      if (isDestroyed()) { await writable.abort(); return false; }
+      await writable.write(artifact.html);
+      if (isDestroyed()) { await writable.abort(); return false; }
+      await writable.close();
+    } catch (error) {
+      try { await writable?.abort(); } catch { /* Preserve the original write error. */ }
+      throw error;
+    }
+    handle = target;
+    if (!isDestroyed()) onStatus(`${labels.saved} ${target.name || fileName}`);
+    return true;
+  };
+  return { canSave, labels, save };
+},function createExportMenu({ document: doc, window: win, parent, before = null, label, items, onOpenChange = () => {} }) {
+  const wrap = doc.createElement('span'); wrap.className = 'export-control';
+  const trigger = doc.createElement('button'); trigger.type = 'button'; trigger.className = 'export-trigger';
+  trigger.textContent = label; trigger.setAttribute('aria-label', label);
+  trigger.setAttribute('aria-haspopup', 'menu'); trigger.setAttribute('aria-expanded', 'false');
+  const chevron = doc.createElement('span'); chevron.setAttribute('aria-hidden', 'true');
+  chevron.innerHTML = '<svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>'; trigger.append(chevron);
+  const panel = doc.createElement('div'); panel.className = 'export-menu'; panel.hidden = true;
+  panel.setAttribute('role', 'menu'); panel.setAttribute('aria-label', label);
+  wrap.append(trigger, panel); parent.insertBefore(wrap, before);
+  const root = wrap.getRootNode();
+  const cleanups = [];
+  const listen = (target, type, fn, options) => {
+    target.addEventListener(type, fn, options);
+    cleanups.push(() => target.removeEventListener(type, fn, options));
+  };
+  const close = (focus = false) => {
+    if (panel.hidden) return;
+    panel.hidden = true; trigger.setAttribute('aria-expanded', 'false'); onOpenChange(false);
+    if (focus) trigger.focus({ preventScroll: true });
+  };
+  const buttons = items.map(item => {
+    const node = doc.createElement('button'); node.type = 'button'; node.textContent = item.label;
+    node.setAttribute('role', 'menuitem'); node.tabIndex = -1;
+    if (item.separator) node.className = 'menu-separator';
+    listen(node, 'click', () => { close(true); item.action(); }); panel.append(node); return node;
+  });
+  const enabled = () => buttons.filter(node => !node.disabled);
+  const open = (last = false) => {
+    panel.hidden = false; trigger.setAttribute('aria-expanded', 'true'); onOpenChange(true);
+    const box = wrap.getBoundingClientRect(), size = panel.getBoundingClientRect();
+    const width = win.innerWidth || 1024, height = win.innerHeight || 768;
+    const above = box.top - 16, below = height - box.bottom - 16;
+    const up = above >= size.height || above > below;
+    panel.style.maxHeight = `${Math.max(44, up ? above : below)}px`;
+    panel.style.left = `${Math.max(8, Math.min(box.left, width - size.width - 8)) - box.left}px`;
+    panel.style.top = up ? 'auto' : 'calc(100% + 8px)';
+    panel.style.bottom = up ? 'calc(100% + 8px)' : 'auto';
+    const choices = enabled(); choices[last ? choices.length - 1 : 0]?.focus({ preventScroll: true });
+  };
+  listen(trigger, 'click', () => panel.hidden ? open() : close());
+  listen(trigger, 'keydown', event => {
+    if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return;
+    event.preventDefault(); event.stopPropagation(); open(event.key === 'ArrowUp');
+  });
+  listen(win, 'keydown', event => {
+    if (panel.hidden) return;
+    if (event.key === 'Escape') {
+      event.preventDefault(); event.stopImmediatePropagation(); close(true); return;
+    }
+    if (event.key === 'Tab') { close(true); return; }
+  }, true);
+  // Inspect internal controls inside their root: window's composedPath hides
+  // them when the toolbar uses a closed shadow root.
+  listen(root, 'keydown', event => {
+    if (panel.hidden) return;
+    if (!event.composedPath().includes(wrap)) return;
+    const choices = enabled(), active = wrap.getRootNode().activeElement || event.target;
+    let index = choices.indexOf(active);
+    if (event.key === 'ArrowDown') index++;
+    else if (event.key === 'ArrowUp') index--;
+    else if (event.key === 'Home') index = 0;
+    else if (event.key === 'End') index = choices.length - 1;
+    else return;
+    event.preventDefault(); event.stopImmediatePropagation();
+    choices[(index + choices.length) % choices.length]?.focus({ preventScroll: true });
+  }, true);
+  listen(root, 'pointerdown', event => { if (!event.composedPath().includes(wrap)) close(); }, true);
+  listen(win, 'pointerdown', event => { if (!event.composedPath().includes(root.host || wrap)) close(); }, true);
+  listen(win, 'resize', () => close());
+  listen(win, 'scroll', () => close(), true);
+  return { trigger, panel, buttons, close, destroy() { close(); cleanups.forEach(fn => fn()); wrap.remove(); } };
+});</script><script>
 (() => {
   const controls = document.createElement('aside');
   controls.setAttribute('data-pageon-extension', '');
   controls.style.cssText = 'position:fixed;top:12px;left:12px;display:flex;gap:8px;padding:12px;background:#173c35;border-radius:10px;z-index:99999';
-  [["编辑","enterEdit"],["完成","exitEdit"],["保存副本","save"]].forEach(([label, method]) => {
+  [["编辑","enterEdit"],["完成","exitEdit"],["另存副本","saveCopy"]].forEach(([label, method]) => {
     const button = document.createElement('button'); button.textContent = label;
     button.style.cssText = 'background:white;color:#173c35;padding:8px 12px;border:0;border-radius:6px;cursor:pointer';
     button.addEventListener('click', () => Promise.resolve(window.PageOnRuntime[method]()).catch(() => alert("保存失败，请重试。")));

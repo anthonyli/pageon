@@ -1,5 +1,5 @@
 // Kept self-contained so the exact same function runs in exported HTML.
-export function installRuntime(config, createDeckEditSession, document, window, fallbackSource = '') {
+export function installRuntime(config, createDeckEditSession, document, window, fallbackSource = '', createFloatingToolbar, createVisualExporter, createFileSaver, createExportMenu) {
 const Node = window.Node || globalThis.Node;
 const MutationObserver = window.MutationObserver || globalThis.MutationObserver;
 const getComputedStyle = window.getComputedStyle?.bind(window) || globalThis.getComputedStyle;
@@ -65,9 +65,11 @@ const style=document.createElement('style');
 style.textContent=config.floatingStyle;
 const bar=document.createElement('div');
 bar.className='bar';
+bar.setAttribute('role','toolbar');
 const editButton=document.createElement('button');
 editButton.type='button';
 editButton.textContent=TEXT.edit;
+editButton.className='edit-button';
 const saveButton=document.createElement('button');
 saveButton.type='button';
 saveButton.textContent=TEXT.save;
@@ -80,6 +82,7 @@ dragHandle.title=TEXT.move;
 dragHandle.textContent='⠿';
 bar.append(dragHandle,editButton,saveButton);
 const brand=document.createElement('a');
+brand.className='brand';
 brand.href=config.homeUrl;
 brand.target='_blank';
 brand.rel='noreferrer';
@@ -114,49 +117,14 @@ if(config.ui==='sidebar'){
 if(config.ui===false){editButton.hidden=true;saveButton.hidden=true;dragHandle.hidden=true;}
 shadow.append(style,bar);
 
-let drag=null;
-let moved=false;
-const positionToolbar=(left,top)=>{
-  const rect=host.getBoundingClientRect();
-  const x=Math.max(8,Math.min(left,window.innerWidth-rect.width-8));
-  const y=Math.max(8,Math.min(top,window.innerHeight-rect.height-8));
-  host.style.left=x+'px';
-  host.style.top=y+'px';
-  host.style.right='auto';
-  host.style.bottom='auto';
-  moved=true;
-};
-listen(dragHandle,'pointerdown',event=>{
-  if(event.button!==0||event.isPrimary===false)return;
-  event.preventDefault();
-  const rect=host.getBoundingClientRect();
-  drag={id:event.pointerId,x:event.clientX,y:event.clientY,left:rect.left,top:rect.top};
-  dragHandle.setPointerCapture(event.pointerId);
-});
-listen(dragHandle,'pointermove',event=>{
-  if(!drag||event.pointerId!==drag.id)return;
-  event.preventDefault();
-  positionToolbar(drag.left+event.clientX-drag.x,drag.top+event.clientY-drag.y);
-});
-const finishDrag=event=>{
-  if(!drag||event.pointerId!==drag.id)return;
-  drag=null;
-  if(dragHandle.hasPointerCapture(event.pointerId))dragHandle.releasePointerCapture(event.pointerId);
-};
-['pointerup','pointercancel','lostpointercapture'].forEach(type=>listen(dragHandle,type,finishDrag));
-listen(dragHandle,'click',event=>event.preventDefault());
-listen(dragHandle,'keydown',event=>{
-  const delta={ArrowLeft:[-20,0],ArrowRight:[20,0],ArrowUp:[0,-20],ArrowDown:[0,20]}[event.key];
-  if(!delta)return;
-  event.preventDefault();
-  const rect=host.getBoundingClientRect();
-  positionToolbar(rect.left+delta[0],rect.top+delta[1]);
-});
-listen(window,'resize',()=>{
-  if(!moved)return;
-  const rect=host.getBoundingClientRect();
-  positionToolbar(rect.left,rect.top);
-});
+let floating;
+let exportMenu;
+const status=document.createElement('span');
+status.className='file-status';status.setAttribute('role','status');status.setAttribute('aria-live','polite');status.hidden=true;
+bar.append(status);
+const reportStatus=message=>{if(destroyed)return;status.textContent=message;status.hidden=false;floating?.refresh();};
+const fileSaver=createFileSaver({window,lang:TEXT.edit==='编辑'?'zh':'en',fileName:config.fileName,isDestroyed:()=>destroyed,onStatus:reportStatus});
+if(fileSaver.canSave&&!config.onSave){saveButton.textContent=fileSaver.labels.save;saveButton.title=fileSaver.labels.choose;}
 
 const ensureMounted=()=>{
   if(destroyed)return;
@@ -181,6 +149,7 @@ const ensureMounted=()=>{
 
 const setEditing=value=>{
   if(destroyed)return;
+  exportMenu?.close();
   selected=null;
   if(document.activeElement?.isContentEditable)document.activeElement.blur();
   editing=value;
@@ -202,13 +171,11 @@ const setEditing=value=>{
     deckEdit.exit();
   }
   editButton.textContent=value?TEXT.done:TEXT.edit;
+  floating?.setEditing(value);
   emit('modechange',value?'edit':'browse');
   if(value&&editingNotice&&!noticeDismissed){
     editingNotice.hidden=false;
-    if(moved){
-      const rect=host.getBoundingClientRect();
-      positionToolbar(rect.left,rect.top);
-    }
+    floating?.refresh();
   }
 };
 
@@ -231,25 +198,62 @@ const serialize = () => {
     return { html, fileName: config.fileName.replace(/\.html?$/i,'')+'-edited.html', runtimeVersion: config.version };
   } finally { if(wasEditing)setEditing(true); }
 };
-const save = () => {
+const save = (copy = false) => {
   if(saving || destroyed)return Promise.resolve();
   saving=true;
+  saveButton.disabled=true;
+  const finish=()=>{saving=false;saveButton.disabled=false;};
+  const failed=error=>{reportStatus(fileSaver.labels.failed);throw error;};
   try {
-    const artifact=serialize();
-    if(config.onSave){
-      return Promise.resolve(config.onSave(artifact)).finally(()=>{saving=false;});
+    if(config.onSave&&!copy){
+      return Promise.resolve(config.onSave(serialize())).catch(failed).finally(finish);
     }
+    if(!copy&&fileSaver.canSave){
+      return fileSaver.save(serialize).catch(failed).finally(finish);
+    }
+    const artifact=serialize();
     const blob=new Blob([artifact.html],{type:'text/html;charset=utf-8'});
     const link=document.createElement('a');
     link.href=URL.createObjectURL(blob);
     link.download=artifact.fileName;
     link.click();
     setTimeout(()=>URL.revokeObjectURL(link.href),1000);
-    saving=false;
+    reportStatus(fileSaver.labels.downloaded);
+    finish();
     return Promise.resolve();
-  } catch(error) { saving=false; return Promise.reject(error); }
+  } catch(error) { finish();reportStatus(fileSaver.labels.failed);return Promise.reject(error); }
 };
 listen(saveButton,'click',()=>{save().catch(error=>emit('error',error));});
+
+let visualExporter=null;
+const exportItems=[{label:fileSaver.labels.copy,action:()=>save(true).catch(error=>emit('error',error))}];
+if(config.imageExport!==false&&typeof createVisualExporter==='function'){
+visualExporter=createVisualExporter({document,window,downloadTarget:shadow,fileName:config.fileName,lang:TEXT.edit==='编辑'?'zh':'en',
+  beforeCapture(){
+    const wasEditing=editing, priorSelected=selected, active=document.activeElement;
+    const selection=window.getSelection?.();
+    const range=selection?.rangeCount?selection.getRangeAt(0).cloneRange():null;
+    setEditing(false);
+    return ()=>{if(wasEditing&&!destroyed){setEditing(true);selected=priorSelected?.isConnected?priorSelected:null;active?.focus?.({preventScroll:true});if(range&&selection){selection.removeAllRanges();selection.addRange(range);}}};
+  },
+  onStatus({busy,message,error}){
+    exportMenu?.buttons.slice(1).forEach(button=>{button.disabled=busy;});
+    reportStatus(message);
+    if(error)emit('error',error);
+    floating?.refresh();
+  },
+});
+for(const [label,method] of [[visualExporter.labels.image,'exportImage'],[visualExporter.labels.pdf,'exportPdf']]){
+  exportItems.push({label,separator:method==='exportImage',action:()=>visualExporter[method]().catch(()=>{})});
+}
+cleanups.push(()=>visualExporter.destroy());
+}
+// The host is not mounted yet; use toolbar membership rather than isConnected.
+exportMenu=createExportMenu({document,window,parent:bar,before:brand.parentNode===bar?brand:status,label:fileSaver.labels.export,items:exportItems,
+  onOpenChange:open=>floating?.setEditing(editing||open)});
+if(config.ui===false){exportMenu.trigger.hidden=true;exportMenu.buttons.forEach(button=>{button.hidden=true;});}
+cleanups.push(()=>exportMenu.destroy());
+
 
 listen(window,'click',event=>{
   if(!editing||event.target===host||event.target.closest?.('[data-pageon-extension]'))return;
@@ -285,6 +289,9 @@ listen(window,'click',event=>{
 
 const isolateEditingKeyboard=event=>{
   if(event.target.closest?.('[data-pageon-extension]'))return;
+  if(event.type==='keydown'&&config.shortcuts&&!event.isComposing&&(event.metaKey||event.ctrlKey)&&event.key?.toLowerCase()==='s'){
+    event.preventDefault();event.stopImmediatePropagation();save().catch(error=>emit('error',error));return;
+  }
   if(event.type==='keydown'&&config.shortcuts&&event.ctrlKey&&event.altKey){
     if(event.code==='KeyE'){event.preventDefault();setEditing(!editing);return;}
     if(event.code==='KeyS'){event.preventDefault();save().catch(error=>emit('error',error));return;}
@@ -315,6 +322,10 @@ rootObserver.observe(document.documentElement,{childList:true,subtree:true,chara
 const shadowObserver=new MutationObserver(queueMountCheck);
 shadowObserver.observe(shadow,{childList:true,subtree:true,characterData:true});
 ensureMounted();
+if(config.ui!==false){
+  floating=createFloatingToolbar({host,root:shadow,bar,handle:dragHandle,win:window,label:TEXT.expand});
+  cleanups.push(()=>floating.destroy());
+}
 function getSelection(){
   return selected?.isConnected ? {nodeId:selected.getAttribute('data-artifact-local-node'),kind:selected.localName==='text'?'svg-text':'text'} : null;
 }
@@ -322,6 +333,7 @@ listen(document,'input',event=>{
   if(editing && event.target.closest?.('[data-artifact-local-node]'))emit('change',getSelection());
 });
 const controller={
+  saveCopy:()=>save(true),
   enterEdit(){setEditing(true);},
   exitEdit(){setEditing(false);},
   getSelection,
@@ -351,6 +363,10 @@ const controller={
     if(window.PageOnRuntime===controller)delete window.PageOnRuntime;
   },
 };
+if(visualExporter){
+  controller.exportImage=()=>visualExporter.exportImage();
+  controller.exportPdf=()=>visualExporter.exportPdf();
+}
 window.PageOnRuntime=controller;
 return controller;
 

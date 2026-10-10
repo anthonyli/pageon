@@ -1,15 +1,21 @@
 import { createDeckEditSession } from "./deck-edit.js";
 import { MIT_LICENSE } from "./license.js";
-import { RUNTIME_EDIT_STYLE, FLOATING_TOOLBAR_STYLE } from "./edit-styles.js";
+import { RUNTIME_EDIT_STYLE, FLOATING_TOOLBAR_STYLE, TOOLBAR_DOCK_STYLE } from "./edit-styles.js";
+import { createFloatingToolbar } from "./floating-toolbar.js";
+import { createVisualExporter } from "./visual-export.js";
+import { VISUAL_EXPORT_FACTORY_SOURCE } from "./visual-export-bundle.js";
 import { installRuntime } from "./install-runtime.js";
+import { createFileSaver } from "./file-save.js";
+import { createExportMenu } from "./export-menu.js";
 
-export const RUNTIME_VERSION = "0.2.1";
+export const RUNTIME_VERSION = "0.2.2";
 export const BRAND_URL = "https://pageon.cc";
 
 function labels(lang) {
   return lang === "zh"
       ? {
           edit: "编辑",
+          expand: "展开编辑工具栏",
           done: "完成",
           save: "保存副本",
           brand: "由 PageOn 编辑",
@@ -19,6 +25,7 @@ function labels(lang) {
         }
       : {
           edit: "Edit",
+          expand: "Show editing toolbar",
           done: "Done",
           save: "Save copy",
           brand: "Made editable with PageOn",
@@ -28,20 +35,25 @@ function labels(lang) {
         };
 }
 
-function options({ fileName = "document.html", lang = "en", temporaryEdits = false, ui = "floating", shortcuts = true } = {}) {
+function options({ fileName = "document.html", lang = "en", temporaryEdits = false, ui = "floating", shortcuts = true, imageExport = true } = {}) {
   if (!["floating", "sidebar", false].includes(ui)) throw new TypeError("invalid-runtime-ui");
   return { fileName: String(fileName), homeUrl: BRAND_URL, temporaryEdits: Boolean(temporaryEdits),
-    ui, editStyle: RUNTIME_EDIT_STYLE, floatingStyle: FLOATING_TOOLBAR_STYLE, shortcuts: Boolean(shortcuts), text: labels(lang), version: RUNTIME_VERSION };
+    ui, editStyle: RUNTIME_EDIT_STYLE, floatingStyle: FLOATING_TOOLBAR_STYLE + TOOLBAR_DOCK_STYLE, shortcuts: Boolean(shortcuts), imageExport: Boolean(imageExport), text: labels(lang), version: RUNTIME_VERSION };
 }
 
 /** Self-contained browser script. Brand URL and attribution are not configurable. */
 export function createRuntimeCode(input = {}) {
-  const config = JSON.stringify(options(input)).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
-  return "/*!\n" + MIT_LICENSE + "*/\n(" + installRuntime.toString() + ")(" + config + "," + createDeckEditSession.toString() + ",document,window);";
+  const settings = options(input);
+  const config = JSON.stringify(settings).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
+  // The capability is fixed when the HTML is assembled. Disabled exports carry
+  // neither the renderer nor its image/PDF controls; enabled copies work offline.
+  const visualExportFactory = settings.imageExport ? VISUAL_EXPORT_FACTORY_SOURCE : "null";
+  return "/*!\n" + MIT_LICENSE + "*/\n(" + installRuntime.toString() + ")(" + config + "," + createDeckEditSession.toString() + ",document,window,''," + createFloatingToolbar.toString() + "," + visualExportFactory + "," + createFileSaver.toString() + "," + createExportMenu.toString() + ");";
 }
 
 /** Use the same controller in a trusted document with custom controls. */
 export function createRuntime({ document = globalThis.document, onSave, ...input } = {}) {
   if (!document?.defaultView) throw new TypeError("runtime-document-required");
-  return installRuntime({ ...options(input), onSave }, createDeckEditSession, document, document.defaultView, createRuntimeCode(input));
+  const settings = options(input);
+  return installRuntime({ ...settings, onSave }, createDeckEditSession, document, document.defaultView, createRuntimeCode(input), createFloatingToolbar, settings.imageExport ? createVisualExporter : null, createFileSaver, createExportMenu);
 }

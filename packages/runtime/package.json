@@ -5,10 +5,19 @@
   "type": "module",
   "exports": {
     ".": "./src/runtime.js",
+    "./floating-toolbar": "./src/floating-toolbar.js",
+    "./file-save": "./src/file-save.js",
+    "./export-menu": "./src/export-menu.js",
     "./deck-edit": "./src/deck-edit.js",
     "./artifact-html": "./src/artifact-html.js",
     "./preview-html": "./src/preview-html.js",
-    "./edit-styles": "./src/edit-styles.js"
+    "./edit-styles": "./src/edit-styles.js",
+    "./visual-export": "./src/visual-export.js",
+    "./visual-export-bundle": "./src/visual-export-bundle.js",
+    "./raster-pdf": "./src/raster-pdf.js"
+  },
+  "dependencies": {
+    "html-to-image": "1.11.13"
   },
   "license": "MIT"
 }
