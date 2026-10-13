@@ -14,10 +14,13 @@
     "./edit-styles": "./src/edit-styles.js",
     "./visual-export": "./src/visual-export.js",
     "./visual-export-bundle": "./src/visual-export-bundle.js",
-    "./raster-pdf": "./src/raster-pdf.js"
+    "./raster-pdf": "./src/raster-pdf.js",
+    "./notes": "./src/notes.js",
+    "./note-target": "./src/note-target.js"
   },
   "dependencies": {
-    "html-to-image": "1.11.13"
+    "html-to-image": "1.11.13",
+    "@pageon/ui": "*"
   },
   "license": "MIT"
 }

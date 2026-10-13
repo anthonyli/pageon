@@ -1,5 +1,5 @@
 /** Shared, self-contained controller for embedded basic and advanced toolbars. */
-export function createFloatingToolbar({ host, root, bar, handle, win, label }) {
+export function createFloatingToolbar({ host, root, bar, handle, win, label, moveWhileEditing = false }) {
   const doc = host.ownerDocument;
   const tab = doc.createElement('button');
   tab.type = 'button'; tab.className = 'dock-tab'; tab.hidden = true;
@@ -8,6 +8,7 @@ export function createFloatingToolbar({ host, root, bar, handle, win, label }) {
   root.append(tab);
   let timer = null, hovered = false, focused = false, keyboard = false;
   let paused = false, destroyed = false, collapsed = false, drag = null, position = null, edge = 'right';
+  let anchor = null;
   const setTimer = win.setTimeout?.bind(win) || globalThis.setTimeout;
   const clearTimer = win.clearTimeout?.bind(win) || globalThis.clearTimeout;
   const cleanups = [];
@@ -28,7 +29,7 @@ export function createFloatingToolbar({ host, root, bar, handle, win, label }) {
     ['right', win.innerWidth - x - width], ['left', x], ['top', y], ['bottom', win.innerHeight - y - height],
   ].sort((a, b) => a[1] - b[1])[0][0];
   const render = () => {
-    if (paused || !position) return;
+    if ((paused && !moveWhileEditing) || !position) return;
     const size = measure();
     position.x = clamp(position.x, size.width, win.innerWidth);
     position.y = clamp(position.y, size.height, win.innerHeight);
@@ -89,8 +90,9 @@ export function createFloatingToolbar({ host, root, bar, handle, win, label }) {
   });
   listen(tab, 'click', event => { event.preventDefault(); expand(); schedule(); });
   listen(handle, 'pointerdown', event => {
-    if (paused || event.button !== 0 || event.isPrimary === false) return;
+    if ((paused && !moveWhileEditing) || event.button !== 0 || event.isPrimary === false) return;
     event.preventDefault(); cancel(); expand();
+    anchor = null;
     const rect = host.getBoundingClientRect();
     drag = { id: event.pointerId, x: event.clientX, y: event.clientY, left: rect.left, top: rect.top };
     host.setAttribute('data-toolbar-dragging', '');
@@ -113,15 +115,24 @@ export function createFloatingToolbar({ host, root, bar, handle, win, label }) {
   listen(handle, 'click', event => event.preventDefault());
   listen(handle, 'keydown', event => {
     const delta = { ArrowLeft: [-20, 0], ArrowRight: [20, 0], ArrowUp: [0, -20], ArrowDown: [0, 20] }[event.key];
-    if (paused || !delta) return;
+    if ((paused && !moveWhileEditing) || !delta) return;
+    anchor = null;
     event.preventDefault(); focused = true; expand(); cancel();
     move(position.x + delta[0], position.y + delta[1]);
   });
-  listen(win, 'resize', () => { render(); });
+  listen(win, 'resize', () => { refresh(); });
+  listen(doc, 'scroll', () => { if (anchor) refresh(); }, true);
   const refresh = () => {
-    if (paused || destroyed) return;
+    if ((paused && !moveWhileEditing) || destroyed) return;
     const rect = host.getBoundingClientRect();
     if (!position) position = { x: rect.left, y: rect.top };
+    if (anchor?.isConnected && paused && moveWhileEditing) {
+      const target = anchor.getBoundingClientRect(), size = measure();
+      if (target.bottom > 0 && target.top < win.innerHeight) {
+        position = { x: target.left + target.width / 2 - size.width / 2,
+          y: target.top >= size.height + 16 ? target.top - size.height - 8 : target.bottom + 8 };
+      }
+    }
     render(); schedule();
   };
   hovered = host.matches(':hover');
@@ -129,11 +140,14 @@ export function createFloatingToolbar({ host, root, bar, handle, win, label }) {
   host.setAttribute('data-toolbar-docking', '');
   return {
     refresh,
+    follow(node) { anchor = node; refresh(); },
     setEditing(value) {
       cancel(); expand(); paused = value; drag = null;
       host.removeAttribute('data-toolbar-dragging');
       host.toggleAttribute('data-toolbar-paused', value);
-      if (value) { host.style.removeProperty('width'); host.style.removeProperty('height'); }
+      if (!value) anchor = null;
+      if (value && !moveWhileEditing) { host.style.removeProperty('width'); host.style.removeProperty('height'); }
+      if (value && moveWhileEditing) refresh();
       else { hovered = host.matches(':hover'); focused = keyboard && !!root.activeElement; refresh(); }
     },
     destroy() { destroyed = true; cancel(); cleanups.forEach(fn => fn()); tab.remove(); },

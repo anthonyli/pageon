@@ -8,7 +8,8 @@
     "./preview": "./src/PreviewFrame.jsx",
     "./styles.css": "./src/styles.css",
     "./messages": "./src/messages.js",
-    "./demo-html": "./src/demo-html.js"
+    "./demo-html": "./src/demo-html.js",
+    "./notes": "./src/NotesPanel.jsx"
   },
   "dependencies": {
     "@pageon/ui": "*",

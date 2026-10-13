@@ -1,3 +1,7 @@
+import { createNoteTarget } from "./note-target.js";
+import { createFloatingPanel } from "@pageon/ui/floating-panel";
+import { createOfflineNoteForm } from "@pageon/ui/offline-note-form";
+import { installNotes } from "./notes.js";
 import { createDeckEditSession } from "./deck-edit.js";
 import { MIT_LICENSE } from "./license.js";
 import { RUNTIME_EDIT_STYLE, FLOATING_TOOLBAR_STYLE, TOOLBAR_DOCK_STYLE } from "./edit-styles.js";
@@ -48,12 +52,12 @@ export function createRuntimeCode(input = {}) {
   // The capability is fixed when the HTML is assembled. Disabled exports carry
   // neither the renderer nor its image/PDF controls; enabled copies work offline.
   const visualExportFactory = settings.imageExport ? VISUAL_EXPORT_FACTORY_SOURCE : "null";
-  return "/*!\n" + MIT_LICENSE + "*/\n(" + installRuntime.toString() + ")(" + config + "," + createDeckEditSession.toString() + ",document,window,''," + createFloatingToolbar.toString() + "," + visualExportFactory + "," + createFileSaver.toString() + "," + createExportMenu.toString() + ");";
+  return "/*!\n" + MIT_LICENSE + "*/\n(" + installRuntime.toString() + ")(" + config + "," + createDeckEditSession.toString() + ",document,window,''," + createFloatingToolbar.toString() + "," + visualExportFactory + "," + createFileSaver.toString() + "," + createExportMenu.toString() + "," + installNotes.toString() + "," + createOfflineNoteForm.toString() + "," + createFloatingPanel.toString() + "," + createNoteTarget.toString() + ");";
 }
 
 /** Use the same controller in a trusted document with custom controls. */
 export function createRuntime({ document = globalThis.document, onSave, ...input } = {}) {
   if (!document?.defaultView) throw new TypeError("runtime-document-required");
   const settings = options(input);
-  return installRuntime({ ...settings, onSave }, createDeckEditSession, document, document.defaultView, createRuntimeCode(input), createFloatingToolbar, settings.imageExport ? createVisualExporter : null, createFileSaver, createExportMenu);
+  return installRuntime({ ...settings, onSave }, createDeckEditSession, document, document.defaultView, createRuntimeCode(input), createFloatingToolbar, settings.imageExport ? createVisualExporter : null, createFileSaver, createExportMenu, installNotes, createOfflineNoteForm, createFloatingPanel, createNoteTarget);
 }

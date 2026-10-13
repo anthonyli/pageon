@@ -45,6 +45,39 @@ export function inheritedBackdrop(node, win) {
   return {};
 }
 
+// Disabling CSS animations otherwise restores the underlying (often invisible)
+// entrance state. Freeze animated declarations before removing the animations.
+export function captureAnimationStyles(node, win) {
+  const values = {};
+  for (const animation of node.getAnimations?.() || []) {
+    const effect = animation.effect;
+    if (effect?.target !== node || effect.pseudoElement) continue;
+    const frames = effect.getKeyframes();
+    const css = win.getComputedStyle(node);
+    const timing = effect.getTiming();
+    const first = frames[0], last = frames.at(-1);
+    const entrance = animation.animationName && timing.iterations === 1 &&
+      timing.direction === 'normal' && Number(first?.opacity) === 0 && Number(last?.opacity) > 0;
+    for (const key of new Set(frames.flatMap(frame => Object.keys(frame)))) {
+      if (['offset', 'computedOffset', 'easing', 'composite'].includes(key)) continue;
+      const property = key.startsWith('--') ? key : key.replace(/[A-Z]/g, char => '-' + char.toLowerCase());
+      values[property] = entrance && last[key] !== undefined ? String(last[key]) : css.getPropertyValue(property);
+    }
+  }
+  return values;
+}
+
+// Scroll observers cannot reveal offscreen content in an inert snapshot. Only
+// expand marked entrance effects, never arbitrary hidden UI or inactive slides.
+export function revealCaptureContent(doc) {
+  for (const node of doc.querySelectorAll('.reveal,.reveal-on-scroll,.scroll-reveal,[data-aos]')) {
+    if (node.closest('[hidden],[inert],[aria-hidden="true"],[data-artifact-no-reveal],[role="dialog"],[aria-modal="true"],dialog,.modal,.dialog,.popover,.tooltip') || node.matches(PAGE_SELECTOR) || node.querySelector('.slides')) continue;
+    const css = doc.defaultView.getComputedStyle(node);
+    if (css.display === 'none' || (Number(css.opacity) !== 0 && css.visibility !== 'hidden')) continue;
+    patch(node, { opacity: '1', visibility: 'visible', transform: 'none' });
+  }
+}
+
 export function createVisualSnapshot(doc, win, mode = 'frame') {
   const sourcePages = findExportPages(doc);
   const dimensions = sourcePages.map(node => {
@@ -73,6 +106,7 @@ export function createVisualSnapshot(doc, win, mode = 'frame') {
   const canvases = [];
   sources.forEach((node, index) => {
     const copy = copies[index];
+    if (!node.closest(OMIT)) patch(copy, captureAnimationStyles(node, win));
     // Preserve current values and rendered canvases, not only the original markup.
     if (node.localName === 'canvas' && !node.closest(OMIT)) {
       // Preserve pixels now; only fail a tainted canvas if it is later found in
@@ -109,11 +143,15 @@ export function createVisualSnapshot(doc, win, mode = 'frame') {
       patch(frame, { all: 'initial', position: 'fixed', left: '-100000px', top: '0', display: 'block', visibility: 'visible', opacity: '1', width: `${doc.documentElement.clientWidth || win.innerWidth}px`, height: `${win.innerHeight}px`, overflow: 'visible', isolation: 'isolate', 'pointer-events': 'none' });
       const shadow = frame.attachShadow({ mode: 'closed' });
       captureShadow = shadow;
-      // :root selectors do not match an html element inside a shadow tree. Carry
-      // its computed declarations, including custom properties and inherited
-      // typography/background, onto the clone without touching source styles.
+      // Carry root defaults into the shadow tree. currentColor-based inherited
+      // text paints must keep their authored values: freezing the root's black
+      // computed fill would override white/colored/gradient descendant text.
+      // adaptCaptureStyles restores authored :root rules before rasterization.
       const rootStyle = win.getComputedStyle(doc.documentElement);
-      for (const property of Array.from(rootStyle)) root.style.setProperty(property, rootStyle.getPropertyValue(property), rootStyle.getPropertyPriority(property));
+      for (const property of Array.from(rootStyle)) {
+        if (['-webkit-text-fill-color', '-webkit-text-stroke-color'].includes(property)) continue;
+        root.style.setProperty(property, rootStyle.getPropertyValue(property), rootStyle.getPropertyPriority(property));
+      }
       // Do not add a CSP to this live document: removing its meta later would
       // not undo that policy. Neutralize cloned browsing contexts without executing
       // or re-fetching their source; visible embeds still fail scope validation.
@@ -182,6 +220,7 @@ async function prepareAssets(snapshot, win) {
     link.addEventListener('load', resolve, { once: true });
     link.addEventListener('error', () => reject(new Error('assets')), { once: true });
   }), win)));
+  revealCaptureContent(doc);
   checkCaptureEmbeds(doc, roots);
   for (const canvas of snapshot.canvases) {
     const visible = rendered(canvas.node);

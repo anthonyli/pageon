@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { openRuntime } from "./runtime-fixture.mjs";
 import { parseHTML } from "linkedom";
 import { createRuntimeCode, createRuntime } from "@pageon/runtime";
+import { VISUAL_EXPORT_FACTORY_SOURCE } from "../../packages/runtime/src/visual-export-bundle.js";
 
 
 test("all interaction layouts retain the official brand and fixed destination", () => {
@@ -133,7 +134,8 @@ test("image export can be excluded without losing offline text editing or saved 
   const disabledSource = createRuntimeCode({ imageExport: false });
   assert.match(disabledSource, /"imageExport":false/);
   assert.doesNotMatch(disabledSource, /html-to-image/);
-  assert.ok(disabledSource.length < enabledSource.length / 2, "omit the renderer, not just its controls");
+  assert.ok(enabledSource.includes(VISUAL_EXPORT_FACTORY_SOURCE));
+  assert.ok(!disabledSource.includes(VISUAL_EXPORT_FACTORY_SOURCE), "omit the renderer, not just its controls");
   for (const ui of ["floating", "sidebar", false]) {
     const page = openRuntime(ui, undefined, { imageExport: false, lang: "zh" });
     let reopened;

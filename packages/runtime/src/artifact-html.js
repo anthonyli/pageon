@@ -1,3 +1,5 @@
+import { applyNoteEntries, attachNotesRuntime } from "./notes.js";
+
 function findEditableNode(doc, id) {
   const value = String(id);
   return Array.from(doc.querySelectorAll("[data-artifact-edit]")).find(
@@ -10,8 +12,10 @@ export function applyArtifactDiffs(html, entries = []) {
   const doc = new DOMParser().parseFromString(html, "text/html");
   entries.forEach(([id, value]) => {
     const target = findEditableNode(doc, id);
-    if (target) target.innerHTML = value;
+    const html = typeof value === "string" ? value : value?.html;
+    if (target && typeof html === "string") target.innerHTML = html;
   });
+  applyNoteEntries(doc, entries, findEditableNode);
   return `<!doctype html>\n${doc.documentElement.outerHTML}`;
 }
 
@@ -19,8 +23,11 @@ export function createExportHtml(template, entries = []) {
   const doc = new DOMParser().parseFromString(template, "text/html");
   entries.forEach(([id, value]) => {
     const target = findEditableNode(doc, id);
-    if (target) target.innerHTML = value;
+    const html = typeof value === "string" ? value : value?.html;
+    if (target && typeof html === "string") target.innerHTML = html;
   });
+  applyNoteEntries(doc, entries, findEditableNode);
+  attachNotesRuntime(doc);
   doc.querySelectorAll("[data-artifact-edit],[data-artifact-selected]").forEach((node) => {
     node.removeAttribute("data-artifact-edit");
     node.removeAttribute("data-artifact-selected");

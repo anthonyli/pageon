@@ -1,5 +1,5 @@
 // Kept self-contained so the exact same function runs in exported HTML.
-export function installRuntime(config, createDeckEditSession, document, window, fallbackSource = '', createFloatingToolbar, createVisualExporter, createFileSaver, createExportMenu) {
+export function installRuntime(config, createDeckEditSession, document, window, fallbackSource = '', createFloatingToolbar, createVisualExporter, createFileSaver, createExportMenu, installNotes, createOfflineNoteForm, createFloatingPanel, createNoteTarget) {
 const Node = window.Node || globalThis.Node;
 const MutationObserver = window.MutationObserver || globalThis.MutationObserver;
 const getComputedStyle = window.getComputedStyle?.bind(window) || globalThis.getComputedStyle;
@@ -49,7 +49,7 @@ const findNodes=()=>{
       return !excluded.has(child.tagName)&&(child.textContent||'').trim();
     });
     const direct=[...element.childNodes].some(node=>node.nodeType===Node.TEXT_NODE&&(node.textContent||'').trim());
-    if(text.length<=12000&&(direct||children.length===0)){result.push(element);return}
+    if(text.length<=12000&&(direct||children.length===0||children.every(child=>child.hasAttribute('data-pageon-note-range')))){result.push(element);return}
     children.forEach(visit);
   };
   [...document.body.children].filter(element=>element.tagName!=='PAGEON-RUNTIME'&&element.tagName!=='ARTIFACT-STUDIO-RUNTIME').forEach(visit);
@@ -73,6 +73,13 @@ editButton.className='edit-button';
 const saveButton=document.createElement('button');
 saveButton.type='button';
 saveButton.textContent=TEXT.save;
+const notesButton=document.createElement('button');
+notesButton.type='button';
+notesButton.className='notes-button';
+notesButton.disabled=true;
+notesButton.textContent=TEXT.edit==='编辑'?'批注':'Notes';
+notesButton.setAttribute('aria-expanded','false');
+notesButton.setAttribute('aria-controls','pageon-note-form');
 const dragHandle=document.createElement('span');
 dragHandle.className='drag-handle';
 dragHandle.setAttribute('role','button');
@@ -80,7 +87,7 @@ dragHandle.tabIndex=0;
 dragHandle.setAttribute('aria-label',TEXT.move);
 dragHandle.title=TEXT.move;
 dragHandle.textContent='⠿';
-bar.append(dragHandle,editButton,saveButton);
+bar.append(dragHandle,editButton,saveButton,notesButton);
 const brand=document.createElement('a');
 brand.className='brand';
 brand.href=config.homeUrl;
@@ -114,7 +121,7 @@ if(config.temporaryEdits){
 if(config.ui==='sidebar'){
   style.textContent+=':host{top:16px;bottom:auto;right:16px;width:180px}.bar{flex-direction:column;align-items:stretch}.drag-handle{align-self:center}';
 }
-if(config.ui===false){editButton.hidden=true;saveButton.hidden=true;dragHandle.hidden=true;}
+if(config.ui===false){editButton.hidden=true;notesButton.hidden=true;saveButton.hidden=true;dragHandle.hidden=true;}
 shadow.append(style,bar);
 
 let floating;
@@ -151,6 +158,7 @@ const setEditing=value=>{
   if(destroyed)return;
   exportMenu?.close();
   selected=null;
+  notesButton.disabled=true;
   if(document.activeElement?.isContentEditable)document.activeElement.blur();
   editing=value;
   if(value)deckEdit.enter();
@@ -169,7 +177,10 @@ const setEditing=value=>{
   }else{
     document.documentElement.removeAttribute('data-artifact-local-edit');
     deckEdit.exit();
+    notesForm.hide();
+    notesButton.setAttribute('aria-expanded','false');
   }
+  notesForm.select(null);
   editButton.textContent=value?TEXT.done:TEXT.edit;
   floating?.setEditing(value);
   emit('modechange',value?'edit':'browse');
@@ -179,15 +190,60 @@ const setEditing=value=>{
   }
 };
 
+// Reuse the early head script when present so Space still precedes deck handlers.
+// Limited DOM implementations can use the editor without the visual overlay.
+const ownsNotes=!window.PageOnNotes&&typeof window.requestAnimationFrame==='function'&&typeof window.URLSearchParams==='function';
+const notes=window.PageOnNotes||(ownsNotes?installNotes(document,window):null);
+if(ownsNotes)cleanups.push(()=>notes.destroy());
+const notesForm=createOfflineNoteForm({document,lang:TEXT.edit==='编辑'?'zh':'en',createFloatingPanel,createNoteTarget,anchor:notesButton,onClose(){notesButton.setAttribute('aria-expanded','false');},onChange(node,value,target){
+  if(!target.write(value))return;
+  notes?.refresh();
+  emit('change',getSelection());
+}});
+notesForm.panel.id='pageon-note-form';
+shadow.append(notesForm.panel);
+cleanups.push(()=>notesForm.destroy());
+const selectNote=node=>{
+  if(!editing||!node?.isConnected)return;
+  selected=node;
+  notesButton.disabled=false;
+  notesForm.select(node);
+  floating?.follow(node);
+  emit('selectionchange',getSelection());
+};
+listen(notesButton,'click',()=>{
+  if(!editing)setEditing(true);
+  notesForm.select(selected);
+  if(notesForm.panel.hidden)notesForm.show();else notesForm.hide();
+  notesButton.setAttribute('aria-expanded',String(!notesForm.panel.hidden));
+  notesForm.select(selected);
+  floating?.refresh();
+});
+listen(document,'pageon:note-select',event=>{
+  if(!editing)return;
+  selectNote(event.detail?.node);
+  notesForm.show(false);
+  notesButton.setAttribute('aria-expanded',String(!notesForm.panel.hidden));
+  floating?.refresh();
+});
 listen(editButton,'click',()=>setEditing(!editing));
 const serialize = () => {
   if(destroyed)throw new Error('runtime-destroyed');
   const wasEditing=editing;
+  const priorSelected=selected;
+  const notesOpen=!notesForm.panel.hidden;
   try {
     setEditing(false);
     ensureMounted();
     const copy=document.documentElement.cloneNode(true);
     copy.querySelectorAll('pageon-runtime, [data-pageon-extension]').forEach(node=>node.remove());
+    copy.querySelectorAll('#pageon-notes-script,pageon-notes').forEach(node=>node.remove());
+    if([...copy.querySelectorAll('[data-pageon-note]')].some(node=>(node.getAttribute('data-pageon-note')||'').trim())){
+      const script=document.createElement('script');
+      script.id='pageon-notes-script';
+      script.textContent='('+installNotes.toString()+')(document,window);';
+      (copy.querySelector('head')||copy).prepend(script);
+    }
     if(!copy.querySelector('#pageon-local-runtime-script') && runtimeSource){
       const script=document.createElement('script');
       script.id='pageon-local-runtime-script';
@@ -196,7 +252,7 @@ const serialize = () => {
     }
     const html='<!doctype html>\n'+copy.outerHTML;
     return { html, fileName: config.fileName.replace(/\.html?$/i,'')+'-edited.html', runtimeVersion: config.version };
-  } finally { if(wasEditing)setEditing(true); }
+  } finally { if(wasEditing){setEditing(true);selectNote(priorSelected);if(notesOpen)notesForm.show();else notesForm.hide();notesButton.setAttribute('aria-expanded',String(notesOpen));floating?.refresh();} }
 };
 const save = (copy = false) => {
   if(saving || destroyed)return Promise.resolve();
@@ -223,6 +279,15 @@ const save = (copy = false) => {
     return Promise.resolve();
   } catch(error) { finish();reportStatus(fileSaver.labels.failed);return Promise.reject(error); }
 };
+notes?.setInputGuard?.(event=>{
+  if(event.target!==host||shadow.activeElement!==notesForm.input)return false;
+  if(event.type==='keydown'&&event.key==='Escape'){event.preventDefault();notesForm.close();}
+  if(event.type==='keydown'&&config.shortcuts&&!event.isComposing&&(event.metaKey||event.ctrlKey)&&event.key?.toLowerCase()==='s'){
+    event.preventDefault();save().catch(error=>emit('error',error));
+  }
+  return true;
+});
+cleanups.push(()=>notes?.setInputGuard?.(null));
 listen(saveButton,'click',()=>{save().catch(error=>emit('error',error));});
 
 let visualExporter=null;
@@ -248,8 +313,7 @@ for(const [label,method] of [[visualExporter.labels.image,'exportImage'],[visual
 }
 cleanups.push(()=>visualExporter.destroy());
 }
-// The host is not mounted yet; use toolbar membership rather than isConnected.
-exportMenu=createExportMenu({document,window,parent:bar,before:brand.parentNode===bar?brand:status,label:fileSaver.labels.export,items:exportItems,
+exportMenu=createExportMenu({document,window,parent:bar,before:notesButton,label:fileSaver.labels.export,items:exportItems,
   onOpenChange:open=>floating?.setEditing(editing||open)});
 if(config.ui===false){exportMenu.trigger.hidden=true;exportMenu.buttons.forEach(button=>{button.hidden=true;});}
 cleanups.push(()=>exportMenu.destroy());
@@ -258,8 +322,17 @@ cleanups.push(()=>exportMenu.destroy());
 listen(window,'click',event=>{
   if(!editing||event.target===host||event.target.closest?.('[data-pageon-extension]'))return;
   event.stopImmediatePropagation();
+  const noteTarget=event.target.closest?.('[data-pageon-note-range]')||event.target.closest?.('[data-pageon-note]')||event.target;
   const node=event.target.closest&&event.target.closest('[data-artifact-local-node]');
-  selected=node || null;
+  selected=event.target.closest?.('[data-pageon-note-range]')||node||(noteTarget!==document.body&&noteTarget!==document.documentElement?noteTarget:null);
+  notesButton.disabled=!selected;
+  floating?.follow(selected);
+  if(!notesForm.panel.hidden&&noteTarget!==document.body&&noteTarget!==document.documentElement){
+    event.preventDefault();
+    selectNote(noteTarget);
+    return;
+  }
+  notesForm.select(selected);
   emit('selectionchange',getSelection());
   if(node&&(node.tagName==='text'||node.tagName==='TEXT')){
     event.preventDefault();
@@ -297,6 +370,7 @@ const isolateEditingKeyboard=event=>{
     if(event.code==='KeyS'){event.preventDefault();save().catch(error=>emit('error',error));return;}
   }
   if(!editing||event.target===host)return;
+  if(event.type==='pointerdown')notesForm.hide();
   event.stopImmediatePropagation();
 };
 ['keydown','keypress','keyup','pointerdown','pointerup','mousedown','mouseup','touchstart','touchend','wheel','dblclick'].forEach(type=>{
@@ -323,14 +397,14 @@ const shadowObserver=new MutationObserver(queueMountCheck);
 shadowObserver.observe(shadow,{childList:true,subtree:true,characterData:true});
 ensureMounted();
 if(config.ui!==false){
-  floating=createFloatingToolbar({host,root:shadow,bar,handle:dragHandle,win:window,label:TEXT.expand});
+  floating=createFloatingToolbar({host,root:shadow,bar,handle:dragHandle,win:window,moveWhileEditing:true,label:TEXT.expand});
   cleanups.push(()=>floating.destroy());
 }
 function getSelection(){
   return selected?.isConnected ? {nodeId:selected.getAttribute('data-artifact-local-node'),kind:selected.localName==='text'?'svg-text':'text'} : null;
 }
 listen(document,'input',event=>{
-  if(editing && event.target.closest?.('[data-artifact-local-node]'))emit('change',getSelection());
+  if(editing && event.target.closest?.('[data-artifact-local-node]')){floating?.refresh();emit('change',getSelection());}
 });
 const controller={
   saveCopy:()=>save(true),

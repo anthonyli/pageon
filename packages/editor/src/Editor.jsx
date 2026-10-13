@@ -1,5 +1,7 @@
 "use client";
 
+import { recordNoteTarget } from "@pageon/runtime/note-target";
+
 import { defaultTranslate, defaultMessage } from "./messages.js";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, Monitor, Tablet, Smartphone, PenLine, Play } from "lucide-react";
@@ -10,6 +12,8 @@ import { applyArtifactDiffs, createExportHtml, downloadHtml, outputFilename } fr
 import { createInteractivePreviewHtml } from "@pageon/runtime/preview-html";
 
 import { createDeckEditSession } from "@pageon/runtime/deck-edit";
+import { installNotes } from "@pageon/runtime/notes";
+import { NotesPanel } from "./NotesPanel.jsx";
 
 function formatBytes(bytes) {
   if (!bytes) return "—";
@@ -42,6 +46,9 @@ export default function Editor({
 }) {
   const iframeRef = useRef(null);
   const deckEditRef = useRef(null);
+  const notesRef = useRef(null);
+  const selectedNodeRef = useRef(null);
+  const [noteRevision, setNoteRevision] = useState(0);
   const diffRef = useRef(new Map());
   const editableCount = file.stats?.editableCount ?? 0;
   const canEdit = editableCount > 0;
@@ -59,6 +66,7 @@ export default function Editor({
   const exportUnlockTimerRef = useRef(null);
 
   useEffect(() => () => window.clearTimeout(exportUnlockTimerRef.current), []);
+  useEffect(() => () => notesRef.current?.destroy(), []);
 
   useEffect(() => {
     const onPreviewMessage = (event) => {
@@ -91,6 +99,7 @@ export default function Editor({
     diffRef.current = new Map(initialDiff);
     setChangeCount(diffRef.current.size);
     setSelectedTag(null);
+    selectedNodeRef.current = null;
     setPreviewError("");
     setPreviewLoading(startingMode === "preview");
     modeRef.current = startingMode;
@@ -110,11 +119,17 @@ export default function Editor({
   }, [changeCount, onDraftChange, onDirtyChange]);
 
   const bindFrame = useCallback(() => {
+    notesRef.current?.destroy();
     if (modeRef.current !== "edit") return;
     const doc = iframeRef.current?.contentDocument;
     if (!doc) return;
     deckEditRef.current = createDeckEditSession(doc);
     doc.documentElement.dataset.artifactMode = modeRef.current;
+    notesRef.current = installNotes(doc, doc.defaultView, { lang: t("批注") === "批注" ? "zh" : "en", onSelect: node => {
+      selectedNodeRef.current = node;
+      setSelectedTag(`<${node.tagName.toLowerCase()}>`);
+      setNoteRevision(value => value + 1);
+    } });
 
     doc.addEventListener(
       "click",
@@ -128,6 +143,8 @@ export default function Editor({
           n.removeAttribute("data-artifact-selected");
         });
         editable.setAttribute("data-artifact-selected", "true");
+        selectedNodeRef.current = editable;
+        setNoteRevision(value => value + 1);
         setSelectedTag(`<${editable.tagName.toLowerCase()}>`);
         // SVG <text> 的 contenteditable 浏览器基本不支持，用覆盖层编辑
         if (editable.tagName.toLowerCase() === "text") {
@@ -156,7 +173,8 @@ export default function Editor({
           const finish = () => {
             editable.textContent = overlay.textContent;
             editable.style.visibility = "";
-            diffRef.current.set(editable.dataset.artifactEdit, editable.innerHTML);
+            const previous = diffRef.current.get(editable.dataset.artifactEdit);
+            diffRef.current.set(editable.dataset.artifactEdit, typeof previous === "object" ? { ...previous, html: editable.innerHTML } : editable.innerHTML);
             setChangeCount(diffRef.current.size);
             publishDraft();
             overlay.remove();
@@ -165,7 +183,7 @@ export default function Editor({
           overlay.addEventListener("keydown", (e) => {
             if (e.key === "Escape") { e.preventDefault(); overlay.blur(); }
           });
-        } else {
+        } else if (doc.getSelection?.()?.isCollapsed !== false) {
           editable.focus();
         }
       },
@@ -175,7 +193,8 @@ export default function Editor({
     doc.addEventListener("input", (event) => {
       const editable = event.target.closest?.("[data-artifact-edit]");
       if (!editable) return;
-      diffRef.current.set(editable.dataset.artifactEdit, editable.innerHTML);
+      const previous = diffRef.current.get(editable.dataset.artifactEdit);
+      diffRef.current.set(editable.dataset.artifactEdit, typeof previous === "object" ? { ...previous, html: editable.innerHTML } : editable.innerHTML);
       setChangeCount(diffRef.current.size);
       publishDraft();
     });
@@ -186,8 +205,9 @@ export default function Editor({
         n.removeAttribute("data-artifact-selected");
       });
       setSelectedTag(null);
+      selectedNodeRef.current = null;
     });
-  }, [publishDraft]);
+  }, [publishDraft, t]);
 
   const handleMode = (next) => {
     if (next === mode || (next === "edit" && !canEdit)) return;
@@ -202,6 +222,7 @@ export default function Editor({
     modeRef.current = next;
     setMode(next);
     setSelectedTag(null);
+    selectedNodeRef.current = null;
   };
 
   const actions = exportActions || [{ id: "download", label: t("导出文件") }];
@@ -388,6 +409,17 @@ export default function Editor({
           </div>
         </div>
 
+
+        <div role="toolbar" aria-label={t("批注")} className="flex items-center border-b bg-card px-4 py-1">
+            {mode === "edit" && <NotesPanel node={selectedNodeRef.current} revision={noteRevision} t={t} disabled={!!exportingType}
+              onSave={(value, target) => {
+                if (!recordNoteTarget(diffRef.current, target, value)) return;
+                setChangeCount(diffRef.current.size);
+                setNoteRevision(revision => revision + 1);
+                publishDraft();
+                notesRef.current?.refresh();
+              }} />}
+        </div>
         {!canEdit && (
           <p className="border-b bg-secondary/60 px-4 py-2 text-xs text-muted-foreground" role="status">
             {t("未识别到静态文字，已切换到预览；动态文字暂不支持直接编辑。")}

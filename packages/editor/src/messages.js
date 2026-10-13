@@ -1,4 +1,6 @@
+import { NOTE_MESSAGES } from "@pageon/runtime/notes";
 const english = {
+  ...NOTE_MESSAGES,
   "Canvas / 嵌入内容": "Canvas / embedded content",
   "HTML 本地预览": "Local HTML preview",
   "以静态内容为主，预览和文本编辑的兼容性较好。": "Mostly static content. Preview and text editing should work well.",
