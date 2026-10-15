@@ -1,6 +1,61 @@
+import { createNoteAnimations, NOTE_ANIMATIONS } from "@pageon/note-animations";
+
 export const NOTE_ATTRIBUTE = "data-pageon-note";
+export const NOTE_ANIMATION_ATTRIBUTE = "data-pageon-note-animation";
+export const readNoteAnimation = node => node?.getAttribute(NOTE_ANIMATION_ATTRIBUTE) || "none";
+export const readNoteCharacter = node => node?.getAttribute("data-pageon-note-character") || "";
+export const readNoteColor = node => {
+  const color = node?.getAttribute("data-pageon-note-color");
+  return /^#[0-9a-f]{6}$/i.test(color || "") ? color.toLowerCase() : "#ffcc39";
+};
+export const NOTE_MARKER_MODES = [
+  { id: "auto", label: "自动" }, { id: "always", label: "始终显示" }, { id: "edit", label: "仅编辑时显示" },
+];
+export function readNoteMarkerMode(doc) {
+  const mode = doc?.documentElement?.getAttribute("data-pageon-note-markers");
+  return ["always", "edit"].includes(mode) ? mode : "auto";
+}
+export function recordNoteMarkerMode(entries, doc, mode) {
+  if (!doc?.documentElement || !["auto", "always", "edit"].includes(mode) || readNoteMarkerMode(doc) === mode) return false;
+  doc.documentElement.setAttribute("data-pageon-note-markers", mode);
+  entries.set("$pageon-notes", { noteMarkers: mode });
+  return true;
+}
 export const NOTE_LIMIT = 2000;
 export const NOTE_MESSAGES = {
+  "文字批注普通导出免费；角色形象仅高级导出支持。": "Text notes are free with standard export. Character notes require premium export.",
+  "角色形象仅高级导出支持 · 1 Credit": "Character notes require premium export · 1 Credit",
+  "此文件包含角色批注，请选择高级导出；如需免费普通导出，请先将出现方式改为无动画。": "This file contains character notes. Choose premium export, or change their entrance animation to None for free standard export.",
+
+  "角色形象": "Character",
+  "圆圈": "Circle",
+  "角色颜色": "Character color",
+  "批注颜色": "Note color",
+  "划选文字颜色": "Selected text color",
+  "使用原色": "Use original color",
+  "自定义颜色": "Custom color",
+  "更多设置": "More settings",
+  "批注标记（整个文档）": "Note markers (whole document)",
+  "自动": "Auto",
+  "始终显示": "Always show",
+  "仅编辑时显示": "Show only while editing",
+  "自动：演示稿预览和播放时隐藏序号，普通文档显示。高亮背景始终保留。": "Auto: hide numbers when previewing or presenting slides; show them in ordinary documents. Highlight backgrounds stay visible.",
+  "软糖": "Jelly",
+  "小星": "Spark",
+  "小蛙": "Frog",
+  "自己的图片": "My image",
+  "上传角色图片": "Upload character image",
+  "选择图片": "Choose image",
+  "已保存自定义图片": "Custom image saved",
+  "尚未选择图片": "No image selected",
+  "支持 PNG、WebP、JPG（最大 2 MB），推荐透明背景。图片随 HTML 保存。": "PNG, WebP or JPG, up to 2 MB. Transparent backgrounds work best. The image is saved in the HTML.",
+  "图片无法读取，请选择 2 MB 以内的 PNG、WebP 或 JPG。": "Could not read the image. Choose a PNG, WebP or JPG under 2 MB.",
+  "正在处理图片…": "Processing image\u2026",
+  "随机跳跃、滚动或滑行，停稳后在角色旁显示文字。": "A random hop, roll or glide, then text appears beside the character.",
+  "预览效果": "Preview",
+
+  "出现方式": "Entrance animation",
+  ...Object.fromEntries(NOTE_ANIMATIONS.map(effect => [effect.label.zh, effect.label.en])),
   "点击标记查看；幻灯片按空格逐条显示，每条 2 秒。": "Click a marker to read. In slides, press Space for each note, shown for 2 seconds.",
   "批注": "Notes",
   "批注内容": "Note text",
@@ -18,10 +73,16 @@ export function readNote(node) {
   return (node?.getAttribute(NOTE_ATTRIBUTE) || "").slice(0, NOTE_LIMIT);
 }
 
-export function setNote(node, text) {
+export function setNote(node, text, animation = readNoteAnimation(node), character = readNoteCharacter(node), color = readNoteColor(node)) {
   const note = typeof text === "string" ? text.trim().slice(0, NOTE_LIMIT) : "";
+  if (note && typeof character === "string" && character.length <= 190000 && character) node.setAttribute("data-pageon-note-character", character);
+  else node.removeAttribute("data-pageon-note-character");
+  if (note && /^#[0-9a-f]{6}$/i.test(color || "")) node.setAttribute("data-pageon-note-color", color.toLowerCase());
+  else node.removeAttribute("data-pageon-note-color");
   if (note) node.setAttribute(NOTE_ATTRIBUTE, note);
   else node.removeAttribute(NOTE_ATTRIBUTE);
+  if (note && typeof animation === "string" && animation !== "none") node.setAttribute(NOTE_ANIMATION_ATTRIBUTE, animation);
+  else node.removeAttribute(NOTE_ANIMATION_ATTRIBUTE);
 }
 
 export function recordNote(entries, node, text) {
@@ -37,9 +98,13 @@ export function recordNote(entries, node, text) {
 
 export function applyNoteEntries(doc, entries, findNode) {
   for (const [id, value] of entries) {
+    if (id === "$pageon-notes" && ["auto", "always", "edit"].includes(value?.noteMarkers)) {
+      doc.documentElement.setAttribute("data-pageon-note-markers", value.noteMarkers);
+      continue;
+    }
     if (typeof value?.note !== "string") continue;
     const node = findNode(doc, id);
-    if (node) setNote(node, value.note);
+    if (node) setNote(node, value.note, value.noteAnimation ?? readNoteAnimation(node), value.noteCharacter ?? readNoteCharacter(node), value.noteColor ?? readNoteColor(node));
   }
 }
 
@@ -49,20 +114,27 @@ export function hasDocumentNotes(html) {
   return [...doc.querySelectorAll(`[${NOTE_ATTRIBUTE}]`)].some(node => readNote(node).trim());
 }
 
+export function hasDocumentCharacterNotes(html) {
+  if (!html || !html.includes(NOTE_ANIMATION_ATTRIBUTE)) return false;
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  return [...doc.querySelectorAll(`[${NOTE_ATTRIBUTE}]`)].some(node => readNote(node).trim() && readNoteAnimation(node) === "companion");
+}
+
 // Run before the page's own keyboard listeners. The payload is self-contained,
 // with note text stored only in escaped HTML attributes, never in JavaScript.
-export function attachNotesRuntime(doc) {
+export function attachNotesRuntime(doc, { noteCharacters = true } = {}) {
   doc.querySelectorAll("#pageon-notes-script,pageon-notes").forEach(node => node.remove());
   if (![...doc.querySelectorAll(`[${NOTE_ATTRIBUTE}]`)].some(node => readNote(node).trim())) return;
   const script = doc.createElement("script");
   script.id = "pageon-notes-script";
-  script.textContent = `(${installNotes.toString()})(document, window);`.replace(/<\/script/gi, "<\\/script");
+  script.textContent = `(${installNotes.toString()})(document, window, {noteCharacters:${!!noteCharacters}}, ${createNoteAnimations.toString()});`.replace(/<\/script/gi, "<\\/script");
   doc.head.prepend(script);
 }
 
 /** Shared by sanitized editor views and exported/preview HTML. */
-export function installNotes(doc, win, { onSelect, lang } = {}) {
+export function installNotes(doc, win, { onSelect, lang, noteCharacters = true } = {}, animationsFactory = createNoteAnimations) {
   win.PageOnNotes?.destroy();
+  const animations = animationsFactory({ allowCharacters: noteCharacters });
   const markersHidden = new win.URLSearchParams(win.location?.search || "").get("pageon-notes") === "off";
   const attr = "data-pageon-note";
   const text = node => (node?.getAttribute(attr) || "").trim().slice(0, 2000);
@@ -72,7 +144,7 @@ export function installNotes(doc, win, { onSelect, lang } = {}) {
   };
   const zh = (lang || doc.documentElement.lang || "en").startsWith("zh");
   const slideSelector = ".slide,[data-slide],.reveal .slides section";
-  let host, root, tip, observer, frame, timer, currentSlide, shown = 0, spaceDown = false, destroyed = false;
+  let presenter, host, root, tip, observer, frame, timer, currentSlide, shown = 0, spaceDown = false, destroyed = false;
   let nodes = [];
   const markers = new Map();
   const cleanups = [];
@@ -93,6 +165,26 @@ export function installNotes(doc, win, { onSelect, lang } = {}) {
     if (rect.width <= 0 || rect.height <= 0 || rect.bottom <= 0 || rect.right <= 0 || rect.top >= win.innerHeight || rect.left >= win.innerWidth) return null;
     return rect;
   };
+  const isPresentation = () => {
+    const groups = new Map();
+    for (const slide of doc.querySelectorAll(slideSelector)) {
+      if (slide.querySelector(slideSelector) || slide.closest('[data-pageon-extension],[data-artifact-no-reveal],[role="dialog"],.carousel,.swiper,.slider,[aria-roledescription="carousel"]')) continue;
+      if (slide.closest('.reveal .slides')) return true;
+      const siblings = groups.get(slide.parentElement) || [];
+      siblings.push(slide); groups.set(slide.parentElement, siblings);
+    }
+    for (const [parent, slides] of groups) {
+      if (slides.length < 2) continue;
+      if (slides.some(slide => slide.hasAttribute('data-slide')) || parent.matches('.slides,.slide-container,.presentation,.deck,[data-presentation]')) return true;
+      // A generic .slide class alone is insufficient: ordinary cards and
+      // carousels use it too. Require a page-sized slide on screen.
+      if (slides.some(slide => {
+        const rect = visibleRect(slide);
+        return rect && rect.width >= win.innerWidth * .6 && rect.height >= win.innerHeight * .6;
+      })) return true;
+    }
+    return false;
+  };
   const activeSlide = () => {
     const slides = [...doc.querySelectorAll(slideSelector)].filter(node =>
       !node.querySelector(slideSelector) && !node.closest('[data-artifact-no-reveal],[role="dialog"],[data-pageon-extension]'));
@@ -107,6 +199,8 @@ export function installNotes(doc, win, { onSelect, lang } = {}) {
   };
   const hide = () => {
     win.clearTimeout(timer);
+    presenter?.cancel(); presenter = null;
+    if (tip) animations.cancel(tip);
     if (tip) { tip.hidden = true; tip.textContent = ""; }
   };
   const syncSlide = () => {
@@ -119,7 +213,13 @@ export function installNotes(doc, win, { onSelect, lang } = {}) {
     if (!tip || !text(node)) return;
     tip.textContent = text(node);
     tip.hidden = false;
-    timer = win.setTimeout(hide, 2000);
+    if (animations.present && node.getAttribute("data-pageon-note-animation") === "companion") {
+      presenter = animations.present({ tip, root, node, character: node.getAttribute("data-pageon-note-character"),
+        onSettled: () => { timer = win.setTimeout(hide, 2000); } });
+    } else {
+      animations.play(tip, node.getAttribute("data-pageon-note-animation"));
+      timer = win.setTimeout(hide, 2000);
+    }
   };
   const refresh = () => {
     if (destroyed || !doc.body) return;
@@ -127,7 +227,7 @@ export function installNotes(doc, win, { onSelect, lang } = {}) {
       host = doc.createElement("pageon-notes");
       host.setAttribute("data-artifact-no-edit", "");
       host.setAttribute("data-pageon-extension", "");
-      host.style.cssText = "position:fixed!important;inset:0!important;z-index:2147483646!important;pointer-events:none!important;display:block!important;";
+      host.style.cssText = "position:fixed!important;inset:0!important;z-index:2147483646!important;pointer-events:none!important;display:block!important;overflow:hidden!important;";
       root = host.attachShadow({ mode: "open" });
       const style = doc.createElement("style");
       style.textContent = ':host{font:14px/1.5 system-ui,sans-serif;color-scheme:light dark}button{position:fixed;pointer-events:auto;width:24px;height:24px;padding:0;border:1px solid #fff;border-radius:50%;background:#0f766e;color:#fff;font:bold 12px/22px system-ui;box-shadow:0 1px 4px #0004;cursor:pointer}button:focus-visible{outline:2px solid #0f766e;outline-offset:3px}[hidden]{display:none!important}.tip{position:fixed;left:50%;bottom:32px;transform:translateX(-50%);box-sizing:border-box;width:max-content;max-width:min(640px,calc(100vw - 32px));max-height:40vh;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;background:#fff;color:#182022;padding:16px 20px;border:1px solid #dfe5e7;border-radius:12px;box-shadow:0 8px 32px #0004;pointer-events:auto;font:16px/1.6 system-ui,sans-serif}@media print{:host{display:none!important}}';
@@ -139,10 +239,24 @@ export function installNotes(doc, win, { onSelect, lang } = {}) {
       root.append(style, tip);
       doc.body.append(host);
     }
+    // Older exports forced selected text to black. Unconfigured ranges now
+    // inherit each original parent's color, including mixed-color selections.
+    for (const mark of doc.querySelectorAll('[data-pageon-note-range][data-pageon-note]')) {
+      const value = mark.getAttribute('data-pageon-note-text-color');
+      const color = /^#[0-9a-f]{6}$/i.test(value || '') ? value : 'inherit';
+      for (const property of ['color', '-webkit-text-fill-color']) {
+        const expected = property === 'color' && color !== 'inherit'
+          ? `rgb(${parseInt(color.slice(1, 3), 16)}, ${parseInt(color.slice(3, 5), 16)}, ${parseInt(color.slice(5, 7), 16)})` : color;
+        if (![color, expected].includes(mark.style.getPropertyValue(property)) || mark.style.getPropertyPriority(property) !== 'important')
+          mark.style.setProperty(property, color, 'important');
+      }
+    }
     nodes = unique([...doc.querySelectorAll(`[${attr}]`)].filter(node => text(node) && !node.closest('[data-pageon-extension],script,style,template')));
     for (const [node, marker] of markers) {
       if (!nodes.includes(node)) { marker.remove(); markers.delete(node); }
     }
+    const mode = doc.documentElement.getAttribute("data-pageon-note-markers");
+    const hideNumbers = !editing() && (mode === "edit" || (mode !== "always" && isPresentation()));
     nodes.forEach((node, index) => {
       if (markersHidden) return;
       let marker = markers.get(node);
@@ -158,10 +272,13 @@ export function installNotes(doc, win, { onSelect, lang } = {}) {
         markers.set(node, marker);
         root.append(marker);
       }
+      const color = node.getAttribute("data-pageon-note-color");
+      marker.style.backgroundColor = /^#[0-9a-f]{6}$/i.test(color || "") ? color : "#ffcc39";
+      marker.style.color = "#000";
       marker.textContent = String(index + 1);
       marker.setAttribute("aria-label", `${zh ? "批注" : "Note"} ${index + 1}`);
       const rect = visibleRect(node);
-      marker.hidden = !rect;
+      marker.hidden = hideNumbers || !rect;
       if (rect) {
         marker.style.left = `${Math.max(0, Math.min(win.innerWidth - 24, rect.right - 12))}px`;
         marker.style.top = `${Math.max(0, Math.min(win.innerHeight - 24, rect.top - 12))}px`;
@@ -207,8 +324,15 @@ export function installNotes(doc, win, { onSelect, lang } = {}) {
   listen(win, "keyup", event => { if (space(event) && spaceDown) { spaceDown = false; stop(event); } }, true);
   listen(doc, "pointerdown", event => { if (editing() && !event.composedPath().includes(host)) hide(); }, true);
   listen(win, "blur", () => { spaceDown = false; hide(); });
-  listen(win, "resize", schedule);
-  listen(doc, "scroll", schedule, true);
+  const reposition = () => { presenter?.reposition(); schedule(); };
+  listen(win, "resize", reposition);
+  listen(doc, "scroll", reposition, true);
+  if (win.visualViewport) { listen(win.visualViewport, "resize", reposition); listen(win.visualViewport, "scroll", reposition); }
+  listen(doc, "pageon:note-preview", event => {
+    const node = event.detail?.node;
+    if (node?.ownerDocument !== doc || !node.isConnected || node.closest("[data-pageon-extension]")) return;
+    refresh(); show(node);
+  });
   listen(doc, "transitionend", schedule, true);
   listen(doc, "animationend", schedule, true);
   listen(doc, "DOMContentLoaded", refresh);
@@ -216,7 +340,7 @@ export function installNotes(doc, win, { onSelect, lang } = {}) {
     if (records.some(record => record.target !== host && !host?.contains(record.target))) schedule();
   });
   observer.observe(doc.documentElement, { subtree: true, childList: true, characterData: true, attributes: true,
-    attributeFilter: [attr, "class", "style", "hidden", "inert", "aria-hidden", "data-artifact-mode", "data-artifact-local-edit"] });
+    attributeFilter: [attr, "data-pageon-note-text-color", "data-pageon-note-color", "data-pageon-note-markers", "class", "style", "hidden", "inert", "aria-hidden", "data-artifact-mode", "data-artifact-local-edit"] });
   refresh();
 
   const api = { refresh, setInputGuard(handler) { inputGuard = handler; }, destroy() {

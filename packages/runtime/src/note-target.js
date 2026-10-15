@@ -1,6 +1,7 @@
 // Self-contained: the standard offline runtime embeds this exact function.
 export function createNoteTarget(node, { capture = true } = {}) {
   const doc = node?.ownerDocument;
+  const normalizeColor = value => /^#[0-9a-f]{6}$/i.test(value || "") ? value.toLowerCase() : "#ffcc39";
   const ownerSelector = '[data-artifact-edit],[data-artifact-local-node],[data-artifact-node]';
   const element = value => value?.nodeType === 1 ? value : value?.parentElement;
   const owner = value => element(value)?.closest('[data-artifact-edit],[data-artifact-local-node]') || element(value)?.closest(ownerSelector);
@@ -32,9 +33,29 @@ export function createNoteTarget(node, { capture = true } = {}) {
     get inline() { return !!group || segments.length > 0; },
     get text() { return segments.length ? segments.map(part => part.original.slice(part.start, part.end)).join('') : (marks().length ? marks().map(mark => mark.textContent).join('') : selected?.textContent || ''); },
     read() { return segments.length ? '' : ((group ? marks()[0] : selected)?.getAttribute('data-pageon-note') || ''); },
-    write(value) {
+    get animation() { return segments.length ? "none" : ((group ? marks()[0] : selected)?.getAttribute("data-pageon-note-animation") || "none"); },
+    get character() { return segments.length ? "" : ((group ? marks()[0] : selected)?.getAttribute("data-pageon-note-character") || ""); },
+    get color() { return normalizeColor(segments.length ? null : (group ? marks()[0] : selected)?.getAttribute("data-pageon-note-color")); },
+    get textColor() {
+      const value = segments.length ? '' : (group ? marks()[0] : selected)?.getAttribute('data-pageon-note-text-color');
+      return /^#[0-9a-f]{6}$/i.test(value || '') ? value.toLowerCase() : '';
+    },
+    write(value, animation = api.animation, character = api.character, color = api.color, textColor = api.textColor) {
+      textColor = /^#[0-9a-f]{6}$/i.test(textColor || '') ? textColor.toLowerCase() : '';
+      color = normalizeColor(color);
       const note = String(value || '').trim().slice(0, 2000);
-      if (note === api.read() && !segments.length) return null;
+      animation = typeof animation === "string" && /^[a-z][a-z0-9-]{0,63}$/.test(animation) ? animation : "none";
+      character = typeof character === "string" && character.length <= 190000 ? character : "";
+      const writeAnimation = node => {
+        if (note) node.setAttribute("data-pageon-note-color", color);
+        else node.removeAttribute("data-pageon-note-color");
+        if (note && character) node.setAttribute("data-pageon-note-character", character);
+        else node.removeAttribute("data-pageon-note-character");
+        if (note && animation !== "none") node.setAttribute("data-pageon-note-animation", animation);
+        else node.removeAttribute("data-pageon-note-animation");
+      };
+      if (note === api.read() && animation === api.animation && character === api.character && color === api.color && textColor === api.textColor && !segments.length) return null;
+      if (!note && !api.read()) return null;
       const changed = new Set();
       if (segments.length) {
         if (!note || segments.some(part => !part.text.isConnected || part.text.data !== part.original)) return null;
@@ -57,9 +78,6 @@ export function createNoteTarget(node, { capture = true } = {}) {
             font: 'inherit', 'line-height': 'inherit', 'vertical-align': 'baseline',
             'white-space': 'inherit', 'letter-spacing': 'inherit', transform: 'none',
           })) mark.style.setProperty(property, value, 'important');
-          mark.style.setProperty('background-color', '#ffeb3b', 'important');
-          mark.style.setProperty('color', '#000000', 'important');
-          mark.style.setProperty('-webkit-text-fill-color', '#000000', 'important');
           chosen.before(mark); mark.append(chosen);
         }
         segments = [];
@@ -68,7 +86,14 @@ export function createNoteTarget(node, { capture = true } = {}) {
         const nodes = marks();
         for (const mark of nodes) {
           const parent = owner(mark.parentElement); if (parent) changed.add(parent);
-          if (note) mark.setAttribute('data-pageon-note', note);
+          if (note) {
+            mark.setAttribute('data-pageon-note', note); writeAnimation(mark);
+            mark.style.setProperty('background-color', color, 'important');
+            if (textColor) mark.setAttribute('data-pageon-note-text-color', textColor);
+            else mark.removeAttribute('data-pageon-note-text-color');
+            mark.style.setProperty('color', textColor || 'inherit', 'important');
+            mark.style.setProperty('-webkit-text-fill-color', textColor || 'inherit', 'important');
+          }
           else {
             // Keep the selected text available if the user clears the note
             // and types again without closing the immediate-edit panel.
@@ -86,21 +111,31 @@ export function createNoteTarget(node, { capture = true } = {}) {
       }
       if (!selected?.isConnected) return null;
       if (note) selected.setAttribute('data-pageon-note', note); else selected.removeAttribute('data-pageon-note');
+      writeAnimation(selected);
       return { inline: false, owners: [selected], node: selected };
     },
   };
   return api;
 }
 
-export function recordNoteTarget(entries, target, value) {
-  const result = target?.write(value);
+export function recordNoteTarget(entries, target, value, animation, character, color, textColor) {
+  const previousColor = target?.color;
+  const previousCharacter = target?.character;
+  const previousAnimation = target?.animation;
+  const result = target?.write(value, animation, character, color, textColor);
   if (!result) return false;
   for (const node of result.owners) {
     const id = node.getAttribute('data-artifact-edit') || node.getAttribute('data-artifact-node');
     if (!id) continue;
     const previous = entries.get(id);
     const entry = typeof previous === 'string' ? { html: previous } : previous;
-    entries.set(id, { ...entry, ...(result.inline ? { html: node.innerHTML } : { note: node.getAttribute('data-pageon-note') || '' }) });
+    const patch = result.inline ? { html: node.innerHTML } : { note: node.getAttribute('data-pageon-note') || '' };
+    if (!result.inline && (previousAnimation !== 'none' || node.hasAttribute('data-pageon-note-animation') || entry?.noteAnimation)) {
+      patch.noteAnimation = target.animation;
+    }
+    if (!result.inline && (previousCharacter || target.character || entry?.noteCharacter)) patch.noteCharacter = target.character;
+    if (!result.inline && (previousColor !== "#ffcc39" || target.color !== "#ffcc39" || entry?.noteColor)) patch.noteColor = target.color;
+    entries.set(id, { ...entry, ...patch });
   }
   return true;
 }

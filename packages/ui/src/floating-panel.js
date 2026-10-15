@@ -1,5 +1,5 @@
 // Self-contained so offline HTML can embed the same anchored popup positioning.
-export function createFloatingPanel({ panel, win, anchor }) {
+export function createFloatingPanel({ panel, win, anchor, maxHeight = 520 }) {
   const cleanups = [];
   const listen = (target, type, fn, capture = false) => {
     target?.addEventListener(type, fn, capture);
@@ -14,7 +14,7 @@ export function createFloatingPanel({ panel, win, anchor }) {
     if (panel.hidden) return;
     const view = bounds(), margin = 8;
     Object.assign(panel.style, { position: 'fixed', width: Math.min(320, Math.max(0, view.width - 16)) + 'px',
-      maxWidth: Math.max(0, view.width - 16) + 'px', maxHeight: Math.max(0, view.height - 16) + 'px', right: 'auto', bottom: 'auto' });
+      maxWidth: Math.max(0, view.width - 16) + 'px', maxHeight: Math.max(0, Math.min(maxHeight, view.height - 16)) + 'px', right: 'auto', bottom: 'auto' });
     const rect = panel.getBoundingClientRect();
     const width = Math.min(rect.width || 320, view.width - 16), height = Math.min(rect.height || 260, view.height - 16);
     const target = anchor?.getBoundingClientRect();

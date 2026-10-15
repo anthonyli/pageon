@@ -51,6 +51,9 @@ test('ordinary exported HTML adds, edits and deletes notes across offline save/r
     first.edit(h1, value);
     assert.equal(h1.getAttribute('data-pageon-note'), value);
     assert.equal(first.doc.querySelector('pageon-notes').shadowRoot.querySelectorAll('button').length, 1);
+    first.click(first.shadow.querySelector('button[aria-label="Note color #fa70ab"]'));
+    assert.equal(h1.dataset.pageonNoteColor, '#fa70ab');
+    assert.equal(first.doc.querySelector('pageon-notes').shadowRoot.querySelector('button').style.backgroundColor, 'rgb(250, 112, 171)');
     const saved = first.runtime.serialize().html;
     assert.equal(first.shadow.querySelector('textarea').value, value, 'saving restores note selection');
     assert.equal(first.shadow.querySelector('.note-form').hidden, false);
@@ -64,6 +67,8 @@ test('ordinary exported HTML adds, edits and deletes notes across offline save/r
     reopened.win.PageOnNotes.refresh();
     reopened.click(reopened.doc.querySelector('pageon-notes').shadowRoot.querySelector('button'));
     assert.equal(reopened.shadow.querySelector('textarea').value, value, 'marker opens existing note editor');
+    assert.equal(reopened.shadow.querySelector('button[aria-label="Note color #fa70ab"]').getAttribute('aria-pressed'), 'true');
+    assert.equal(reopened.doc.querySelector('pageon-notes').shadowRoot.querySelector('button').style.backgroundColor, 'rgb(250, 112, 171)');
     reopened.edit(reopened.doc.querySelector('h1'), 'Changed offline');
     reopened.click(reopened.shadow.querySelector('.note-delete'));
     assert.equal(reopened.doc.querySelector('h1').hasAttribute('data-pageon-note'), false);
@@ -160,6 +165,9 @@ for (const search of ['', '?pageon-notes=off']) test(`notes added offline keep S
     input.focus();
     for (const key of [' ', 'ArrowRight', 'ArrowLeft']) input.dispatchEvent(new reopened.win.KeyboardEvent('keydown', { key, bubbles: true, composed: true }));
     assert.deepEqual([...reopened.win.deckKeys], ['ArrowRight', 'ArrowLeft'], 'original window capture listeners cannot navigate while typing notes');
+    const select = reopened.shadow.querySelector('#pageon-note-animation'); select.focus();
+    for (const key of [' ', 'ArrowRight', 'ArrowLeft', 'ArrowDown']) select.dispatchEvent(new reopened.win.KeyboardEvent('keydown', { key, bubbles: true, composed: true }));
+    assert.deepEqual([...reopened.win.deckKeys], ['ArrowRight', 'ArrowLeft'], 'animation selection does not navigate the deck');
   } finally { f.close(); reopened?.close(); }
 });
 
@@ -171,9 +179,15 @@ test('bundled production runtime saves notes with a standalone early playback sc
   try {
     assert.deepEqual(f.errors, []);
     f.edit(f.doc.querySelector('h1'), 'Production note');
+    const select = f.shadow.querySelector('#pageon-note-animation'); select.value = 'fade';
+    select.dispatchEvent(new f.win.Event('change', { bubbles: true, composed: true }));
     reopened = open(f.runtime.serialize().html);
     assert.deepEqual(reopened.errors, []);
     assert.equal(reopened.doc.querySelector('h1').getAttribute('data-pageon-note'), 'Production note');
+    reopened.win.PageOnNotes.refresh();
+    const calls = []; reopened.win.HTMLElement.prototype.animate = frames => { calls.push(frames); return { cancel() {} }; };
+    reopened.click(reopened.doc.querySelector('pageon-notes').shadowRoot.querySelector('button'));
+    assert.equal(calls.length, 1); assert.equal(calls[0][0].opacity, 0);
     reopened.edit(reopened.doc.querySelector('h1'), 'Still editable');
     assert.equal(reopened.doc.querySelector('h1').getAttribute('data-pageon-note'), 'Still editable');
   } finally { f.close(); reopened?.close(); }
@@ -193,15 +207,140 @@ test('standard selected-text notes survive save/reopen and dismiss when choosing
     assert.equal(f.shadow.querySelector('.note-form').hidden, true, 'outside pointer dismisses the panel');
     f.click(f.shadow.querySelector('.notes-button'));
     assert.equal(title.querySelector('[data-pageon-note-range]').textContent, 'itl');
+    assert.equal(title.querySelector('[data-pageon-note-range]').style.color, 'inherit');
+    const textTrigger = f.shadow.querySelector('button[aria-label="Selected text color"]');
+    assert.equal(textTrigger.getAttribute('aria-expanded'), 'false');
+    f.click(textTrigger);
+    const hex = f.shadow.querySelector('input[aria-label="Selected text color HEX"]'); hex.value = '#123abc';
+    hex.dispatchEvent(new f.win.Event('change', { bubbles: true }));
+    assert.equal(title.querySelector('[data-pageon-note-range]').dataset.pageonNoteTextColor, '#123abc');
+    assert.match(f.runtime.serialize().html, /data-pageon-note-text-color="#123abc"/);
+    f.click(f.shadow.querySelector('button[aria-label="Selected text color #fa70ab"]'));
     assert.equal(title.style.backgroundColor, '');
+    f.click(f.shadow.querySelector('button[aria-label="Note color #02bb9f"]'));
+    assert.equal(title.querySelector('[data-pageon-note-range]').style.backgroundColor, 'rgb(2, 187, 159)');
     f.click(f.doc.querySelector('p')); assert.equal(f.shadow.querySelector('.note-form').hidden, true);
     reopened = open(f.runtime.serialize().html); reopened.runtime.enterEdit();
     const mark = reopened.doc.querySelector('[data-pageon-note-range]');
-    assert.equal(mark.style.color, 'rgb(0, 0, 0)');
+    assert.equal(mark.style.color, 'rgb(250, 112, 171)');
+    assert.equal(mark.dataset.pageonNoteTextColor, '#fa70ab');
     reopened.win.PageOnNotes.refresh(); reopened.click(reopened.doc.querySelector('pageon-notes').shadowRoot.querySelector('button'));
     assert.equal(reopened.shadow.querySelector('textarea').value, 'Text cue');
+    assert.equal(mark.style.backgroundColor, 'rgb(2, 187, 159)');
+    assert.equal(mark.dataset.pageonNoteColor, '#02bb9f');
+    assert.equal(reopened.shadow.querySelector('button[aria-label="Note color #02bb9f"]').getAttribute('aria-pressed'), 'true');
+    assert.equal(reopened.shadow.querySelector('button[aria-label="Selected text color #fa70ab"]').getAttribute('aria-pressed'), 'true');
+    reopened.click([...reopened.shadow.querySelectorAll('button')].find(button => button.textContent === 'Use original color'));
+    assert.equal(mark.style.color, 'inherit');
+    assert.equal(mark.style.backgroundColor, 'rgb(2, 187, 159)', 'resetting the text keeps the background');
+    assert.equal(mark.hasAttribute('data-pageon-note-text-color'), false);
+    reopened.click(reopened.shadow.querySelector('button[aria-label="Note color #a25aff"]'));
+    assert.equal(mark.style.backgroundColor, 'rgb(162, 90, 255)');
     reopened.click(reopened.shadow.querySelector('.note-delete'));
     assert.equal(reopened.doc.querySelector('[data-pageon-note-range]'), null);
     assert.equal(reopened.doc.querySelector('h1').textContent, 'Title');
+  } finally { f.close(); reopened?.close(); }
+});
+
+for (const lang of ['en', 'zh']) test(`offline animation selection saves, reopens, plays and clears (${lang})`, () => {
+  const f = open(undefined, { lang }); let reopened;
+  try {
+    f.edit(f.doc.querySelector('h1'), '');
+    const select = f.shadow.querySelector('#pageon-note-animation');
+    assert.equal(select.value, 'none');
+    assert.deepEqual([...select.options].map(o => o.value), ['none', 'fade', 'fly', 'zoom']);
+    assert.equal(select.labels[0].textContent, lang === 'zh' ? '出现方式' : 'Entrance animation');
+    select.value = 'zoom'; select.dispatchEvent(new f.win.Event('change', { bubbles: true, composed: true }));
+    assert.equal(select.value, 'zoom', 'an entrance can be chosen before entering text');
+    assert.equal(f.doc.querySelector('h1').hasAttribute('data-pageon-note'), false);
+    const input = f.shadow.querySelector('textarea'); input.value = 'Animated note';
+    input.dispatchEvent(new f.win.Event('input', { bubbles: true, composed: true }));
+    assert.equal(f.doc.querySelector('h1').dataset.pageonNoteAnimation, 'zoom');
+    reopened = open(f.runtime.serialize().html);
+    assert.deepEqual(reopened.errors, []);
+    reopened.win.PageOnNotes.refresh();
+    const calls = [];
+    reopened.win.HTMLElement.prototype.animate = function (frames) { calls.push({ node: this, frames }); return { cancel() {} }; };
+    const marker = reopened.doc.querySelector('pageon-notes').shadowRoot.querySelector('button');
+    reopened.click(marker); assert.equal(calls.length, 1); assert.equal(calls[0].frames[0].scale, '0.9');
+    assert.equal(calls[0].node.getAttribute('role'), 'status');
+    reopened.edit(reopened.doc.querySelector('h1'), 'Same effect');
+    const nextSelect = reopened.shadow.querySelector('#pageon-note-animation');
+    assert.equal(nextSelect.value, 'zoom');
+    nextSelect.value = 'none'; nextSelect.dispatchEvent(new reopened.win.Event('change', { bubbles: true, composed: true }));
+    const saved = new reopened.win.DOMParser().parseFromString(reopened.runtime.serialize().html, 'text/html');
+    assert.equal(saved.querySelector('h1').hasAttribute('data-pageon-note-animation'), false);
+  } finally { f.close(); reopened?.close(); }
+});
+
+for (const lang of ['en', 'zh']) test(`opt-in character runtime preserves uploaded images in saved HTML (${lang})`, async () => {
+  const f = open(undefined, { lang, source: createRuntimeCode({ lang, noteCharacters: true, imageExport: false }) }); let reopened;
+  const image = 'data:image/png;base64,aGVsbG8=';
+  const changeSelect = (id, value) => { const select = f.shadow.querySelector(id); select.value = value; select.dispatchEvent(new f.win.Event('change', { bubbles: true, composed: true })); };
+  try {
+    const title = f.doc.querySelector('h1'); f.edit(title, 'A character speaks');
+    assert.equal(title.dataset.pageonNoteAnimation, undefined, 'new notes default to free text');
+    changeSelect('#pageon-note-animation', 'companion'); changeSelect('#pageon-note-character', 'frog');
+    f.click(f.shadow.querySelector('.note-character-options button[aria-label$="#fa70ab"]'));
+    assert.deepEqual(JSON.parse(title.getAttribute('data-pageon-note-character')), { id: 'frog', color: '#fa70ab', image: '' });
+    changeSelect('#pageon-note-character', 'custom');
+    f.win.FileReader = class { readAsDataURL() { this.result = image; this.onload(); } };
+    f.win.Image = class { naturalWidth = 512; naturalHeight = 512; set src(value) { this.onload(); } };
+    f.win.HTMLCanvasElement.prototype.getContext = () => ({ drawImage() {} });
+    f.win.HTMLCanvasElement.prototype.toDataURL = () => image;
+    const file = f.shadow.querySelector('#pageon-note-image'); Object.defineProperty(file, 'files', { value: [{ type: 'image/png', size: 100 }] });
+    file.dispatchEvent(new f.win.Event('change', { bubbles: true, composed: true })); await Promise.resolve(); await Promise.resolve();
+    assert.equal(JSON.parse(title.getAttribute('data-pageon-note-character')).image, image);
+    const html = f.runtime.serialize().html; reopened = open(html);
+    assert.deepEqual(reopened.errors, []);
+    reopened.edit(reopened.doc.querySelector('h1'), 'Read offline');
+    assert.equal(reopened.shadow.querySelector('#pageon-note-animation').value, 'companion');
+    assert.equal(reopened.shadow.querySelector('#pageon-note-character').value, 'custom');
+    assert.equal(reopened.shadow.querySelector('.note-character-row img').src, image);
+    reopened.click(reopened.shadow.querySelector('.note-preview'));
+    const notes = reopened.doc.querySelector('pageon-notes').shadowRoot;
+    assert.equal(notes.querySelector('.note-character img').src, image); assert.equal(notes.querySelector('.tip').textContent, 'Read offline');
+    reopened.click(reopened.shadow.querySelector('.note-delete'));
+    assert.equal(reopened.doc.querySelector('h1').hasAttribute('data-pageon-note-character'), false);
+  } finally { f.close(); reopened?.close(); }
+});
+
+test('a delayed image upload cannot overwrite a different selected note', async () => {
+  const f = open(undefined, { source: createRuntimeCode({ noteCharacters: true, imageExport: false }) }); let reader;
+  try {
+    const title = f.doc.querySelector('h1'), other = f.doc.querySelector('p'); f.edit(title, 'First');
+    const choose = (id, value) => { const select = f.shadow.querySelector(id); select.value = value; select.dispatchEvent(new f.win.Event('change', { bubbles: true, composed: true })); };
+    choose('#pageon-note-animation', 'companion'); choose('#pageon-note-character', 'custom');
+    f.win.FileReader = class { readAsDataURL() { reader = this; } };
+    f.win.Image = class { naturalWidth = 64; naturalHeight = 64; set src(value) { this.onload(); } };
+    f.win.HTMLCanvasElement.prototype.getContext = () => ({ drawImage() {} }); f.win.HTMLCanvasElement.prototype.toDataURL = () => 'data:image/png;base64,aGVsbG8=';
+    const file = f.shadow.querySelector('#pageon-note-image'); Object.defineProperty(file, 'files', { value: [{ type: 'image/png', size: 100 }] });
+    file.dispatchEvent(new f.win.Event('change', { bubbles: true, composed: true }));
+    f.edit(other, 'Second'); reader.result = 'data:image/png;base64,aGVsbG8='; reader.onload(); await Promise.resolve(); await Promise.resolve();
+    assert.equal(other.dataset.pageonNote, 'Second'); assert.equal(other.hasAttribute('data-pageon-note-character'), false);
+    assert.equal(JSON.parse(title.dataset.pageonNoteCharacter).image, '');
+  } finally { f.close(); }
+});
+
+test('standard offline document marker preference survives save and reopen without changing highlights', async () => {
+  const f = open(); let reopened;
+  try {
+    f.edit(f.doc.querySelector('h1'), 'Text cue');
+    const selector = f.shadow.querySelector('#pageon-note-markers');
+    assert.equal(selector.value, 'auto');
+    selector.value = 'edit'; selector.dispatchEvent(new f.win.Event('change', { bubbles: true }));
+    assert.equal(f.doc.documentElement.dataset.pageonNoteMarkers, 'edit');
+    const marker = f.doc.querySelector('pageon-notes').shadowRoot.querySelector('button');
+    assert.equal(marker.hidden, false, 'editing always exposes notes');
+    reopened = open(f.runtime.serialize().html);
+    assert.deepEqual(reopened.errors, []);
+    assert.equal(reopened.doc.documentElement.dataset.pageonNoteMarkers, 'edit');
+    reopened.win.PageOnNotes.refresh();
+    assert.equal(reopened.doc.querySelector('pageon-notes').shadowRoot.querySelector('button').hidden, true);
+    reopened.edit(reopened.doc.querySelector('h1'), 'Text cue');
+    await Promise.resolve();
+    await new Promise(resolve => reopened.win.requestAnimationFrame(resolve));
+    assert.equal(reopened.shadow.querySelector('#pageon-note-markers').value, 'edit');
+    assert.equal(reopened.doc.querySelector('pageon-notes').shadowRoot.querySelector('button').hidden, false);
   } finally { f.close(); reopened?.close(); }
 });

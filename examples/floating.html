@@ -42,7 +42,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
-(function installRuntime(config, createDeckEditSession, document, window, fallbackSource = '', createFloatingToolbar, createVisualExporter, createFileSaver, createExportMenu, installNotes, createOfflineNoteForm, createFloatingPanel, createNoteTarget) {
+(function installRuntime(config, createDeckEditSession, document, window, fallbackSource = '', createFloatingToolbar, createVisualExporter, createFileSaver, createExportMenu, installNotes, createOfflineNoteForm, createFloatingPanel, createNoteTarget, createNoteAnimations, createColorPalette) {
 const Node = window.Node || globalThis.Node;
 const MutationObserver = window.MutationObserver || globalThis.MutationObserver;
 const getComputedStyle = window.getComputedStyle?.bind(window) || globalThis.getComputedStyle;
@@ -236,10 +236,14 @@ const setEditing=value=>{
 // Reuse the early head script when present so Space still precedes deck handlers.
 // Limited DOM implementations can use the editor without the visual overlay.
 const ownsNotes=!window.PageOnNotes&&typeof window.requestAnimationFrame==='function'&&typeof window.URLSearchParams==='function';
-const notes=window.PageOnNotes||(ownsNotes?installNotes(document,window):null);
+const notes=window.PageOnNotes||(ownsNotes?installNotes(document,window,{noteCharacters:config.noteCharacters},createNoteAnimations):null);
 if(ownsNotes)cleanups.push(()=>notes.destroy());
-const notesForm=createOfflineNoteForm({document,lang:TEXT.edit==='编辑'?'zh':'en',createFloatingPanel,createNoteTarget,anchor:notesButton,onClose(){notesButton.setAttribute('aria-expanded','false');},onChange(node,value,target){
-  if(!target.write(value))return;
+const notesForm=createOfflineNoteForm({document,paletteFactory:createColorPalette,paletteColors:config.paletteColors,animations:createNoteAnimations({allowCharacters:config.noteCharacters}),lang:TEXT.edit==='编辑'?'zh':'en',createFloatingPanel,createNoteTarget,anchor:notesButton,onClose(){notesButton.setAttribute('aria-expanded','false');},onMarkerModeChange(mode){
+  if(!['auto','always','edit'].includes(mode))return;
+  document.documentElement.setAttribute('data-pageon-note-markers',mode);
+  notes?.refresh();emit('change',getSelection());
+},onChange(node,value,target,animation,character,color,textColor){
+  if(!target.write(value,animation,character,color,textColor))return;
   notes?.refresh();
   emit('change',getSelection());
 }});
@@ -284,7 +288,7 @@ const serialize = () => {
     if([...copy.querySelectorAll('[data-pageon-note]')].some(node=>(node.getAttribute('data-pageon-note')||'').trim())){
       const script=document.createElement('script');
       script.id='pageon-notes-script';
-      script.textContent='('+installNotes.toString()+')(document,window);';
+      script.textContent='('+installNotes.toString()+')(document,window,{noteCharacters:'+!!config.noteCharacters+'},'+createNoteAnimations.toString()+');';
       (copy.querySelector('head')||copy).prepend(script);
     }
     if(!copy.querySelector('#pageon-local-runtime-script') && runtimeSource){
@@ -323,7 +327,7 @@ const save = (copy = false) => {
   } catch(error) { finish();reportStatus(fileSaver.labels.failed);return Promise.reject(error); }
 };
 notes?.setInputGuard?.(event=>{
-  if(event.target!==host||shadow.activeElement!==notesForm.input)return false;
+  if(event.target!==host||!notesForm.panel.contains(shadow.activeElement))return false;
   if(event.type==='keydown'&&event.key==='Escape'){event.preventDefault();notesForm.close();}
   if(event.type==='keydown'&&config.shortcuts&&!event.isComposing&&(event.metaKey||event.ctrlKey)&&event.key?.toLowerCase()==='s'){
     event.preventDefault();save().catch(error=>emit('error',error));
@@ -487,7 +491,7 @@ if(visualExporter){
 window.PageOnRuntime=controller;
 return controller;
 
-})({"fileName":"pageon-editable-demo.html","homeUrl":"https://pageon.cc","temporaryEdits":false,"ui":"floating","editStyle":"\n    html[data-artifact-local-edit=\"true\"] [data-artifact-local-node]{cursor:text!important;outline:1px dashed rgba(31,157,139,.45)!important;outline-offset:3px}\n    html[data-artifact-local-edit=\"true\"] [data-artifact-local-node]:hover{outline:1px dashed rgba(31,157,139,.85)!important;background:rgba(31,157,139,.04)!important}\n    html[data-artifact-local-edit=\"true\"] [data-artifact-local-node]:focus{outline:2px solid #1f9d8b!important;outline-offset:3px;box-shadow:0 0 0 5px rgba(31,157,139,.1)!important}\n    @media print{pageon-runtime{display:none!important}}\n  ","floatingStyle":"\n  :host{position:fixed;right:18px;bottom:18px;z-index:2147483647;display:block;font-family:Inter,-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif}\n  [hidden]{display:none!important}\n  .bar{display:flex;flex-wrap:wrap;max-width:calc(100vw - 32px);box-sizing:border-box;align-items:center;gap:6px;padding:6px;\n    border:1px solid rgba(255,255,255,.12);border-radius:12px;background:rgba(7,26,29,.97);box-shadow:0 6px 22px rgba(7,26,29,.18);color:#fff;font-size:13px;line-height:1.4;backdrop-filter:blur(12px)}\n  button{box-sizing:border-box;border:1px solid transparent;border-radius:7px;min-height:36px;padding:7px 11px;background:transparent;color:#e0eeeb;font:inherit;font-weight:500;cursor:pointer;white-space:nowrap}\n  button:hover{background:rgba(255,255,255,.09)}\n  button:focus-visible{outline:2px solid #8edbcd;outline-offset:2px}\n  button:disabled{opacity:.45;cursor:default}\n  .bar>.edit-button{background:#1f9d8b;color:#fff;font-weight:600}\n  .bar>.edit-button:hover{background:#188b7c}\n  .drag-handle{cursor:grab;touch-action:none;user-select:none;padding:7px 4px;color:#8ba7a2;font-size:20px;line-height:1}\n  .drag-handle:active{cursor:grabbing}.drag-handle:focus-visible{outline:2px solid #8edbcd;border-radius:4px}\n  .brand{color:#a1beb8;text-decoration:none;font-weight:400;font-size:11px;padding:3px 6px 3px 12px;margin-left:2px;border-left:1px solid #ffffff24;white-space:nowrap}\n  .brand:hover{color:#c5e5dc}.brand:focus-visible{outline:2px solid #8edbcd;outline-offset:2px;border-radius:3px}\n  .file-status{flex-basis:100%;max-width:340px;padding:3px 6px;line-height:1.5;font-size:12px;overflow-wrap:anywhere}\n  .export-control{position:relative;display:inline-flex;align-items:center}\n  .export-trigger{display:inline-flex;align-items:center;gap:7px}\n  .export-trigger>span{display:flex;color:inherit}\n  .export-trigger svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}\n  .export-menu{position:absolute;z-index:30;bottom:calc(100% + 8px);left:0;box-sizing:border-box;width:184px;max-width:calc(100vw - 24px);overflow:auto;padding:5px;\n    background:#fff;color:#182022;border:1px solid #dfe5e7;border-radius:10px;box-shadow:0 8px 24px #102b2926}\n  .bar .export-menu button{display:flex;justify-content:flex-start;width:100%;min-height:36px;padding:8px 10px;background:transparent;color:#182022;border:0;text-align:left;font:500 13px/1.4 Inter,-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif}\n  .bar .export-menu button:hover,.bar .export-menu button:focus-visible{background:#edf7f5;color:#087f73}\n  .bar .export-menu button:focus-visible{outline:2px solid #1f9d8b;outline-offset:-2px}\n  .bar .export-menu .menu-separator{border-top:1px solid #e5ece9;border-radius:0 0 6px 6px;margin-top:4px;padding-top:11px}\n  @media(pointer:coarse){button,.bar .export-menu button{min-height:44px}.drag-handle{min-width:24px;padding:12px 6px}}\n  @media(max-width:520px){.bar:not(.editor) .brand{flex-basis:100%;text-align:right;border-left:0;padding:2px 6px}}\n\n  :host([data-toolbar-docking]:not([data-toolbar-paused])){transition:left .28s ease,top .28s ease,width .28s ease,height .28s ease}\n  :host([data-toolbar-docking]:not([data-toolbar-paused]))>.bar{width:max-content;transition:opacity .18s ease}\n  :host([data-toolbar-dragging]){transition:none!important}\n  :host([data-docked]){overflow:hidden;border-radius:10px;background:#071a1d;box-shadow:0 4px 16px #071a1d33}\n  :host([data-docked])>.bar{opacity:0;visibility:hidden;pointer-events:none}\n  :host([data-docked][data-dock-edge=left]){border-radius:0 10px 10px 0}\n  :host([data-docked][data-dock-edge=right]){border-radius:10px 0 0 10px}\n  :host([data-docked][data-dock-edge=top]){border-radius:0 0 10px 10px}\n  :host([data-docked][data-dock-edge=bottom]){border-radius:10px 10px 0 0}\n  .dock-tab{position:absolute;inset:0;width:100%;height:100%;padding:8px!important;border:0;border-radius:inherit!important;display:flex;align-items:center;justify-content:center;background:#071a1d!important;color:#8edbcd!important;cursor:pointer}\n  .dock-tab[hidden]{display:none!important}\n  .dock-tab svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}\n  .dock-tab:focus-visible{outline:2px solid #8edbcd;outline-offset:-3px}\n  @media(prefers-reduced-motion:reduce){:host([data-toolbar-docking]),:host([data-toolbar-docking])>.bar{transition:none!important}}\n","shortcuts":true,"imageExport":true,"text":{"edit":"Edit","expand":"Show editing toolbar","done":"Done","save":"Save copy","brand":"Made editable with PageOn","move":"Drag toolbar; use arrow keys to move","closeNotice":"Dismiss notice","warning":"Edits to this page's dynamic text are temporary; saving these edits is not supported. Done only exits editing. Save copy does not write edits back to component data. Re-rendering or reopening may overwrite edits with the original content."},"version":"0.2.2"},function createDeckEditSession(doc) {
+})({"paletteColors":["#bac1d3","#02b1ff","#ffcc39","#dd6adc","#b6d80d","#fa70ab","#ff8066","#02bb9f","#4678ff","#a25aff"],"fileName":"pageon-editable-demo.html","homeUrl":"https://pageon.cc","temporaryEdits":false,"ui":"floating","editStyle":"\n    html[data-artifact-local-edit=\"true\"] [data-artifact-local-node]{cursor:text!important;outline:1px dashed rgba(31,157,139,.45)!important;outline-offset:3px}\n    html[data-artifact-local-edit=\"true\"] [data-artifact-local-node]:hover{outline:1px dashed rgba(31,157,139,.85)!important;background:rgba(31,157,139,.04)!important}\n    html[data-artifact-local-edit=\"true\"] [data-artifact-local-node]:focus{outline:2px solid #1f9d8b!important;outline-offset:3px;box-shadow:0 0 0 5px rgba(31,157,139,.1)!important}\n    @media print{pageon-runtime{display:none!important}}\n  ","floatingStyle":"\n  :host{position:fixed;right:18px;bottom:18px;z-index:2147483647;display:block;font-family:Inter,-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif}\n  [hidden]{display:none!important}\n  .bar{display:flex;flex-wrap:wrap;max-width:calc(100vw - 32px);box-sizing:border-box;align-items:center;gap:6px;padding:6px;\n    border:1px solid rgba(255,255,255,.12);border-radius:12px;background:rgba(7,26,29,.97);box-shadow:0 6px 22px rgba(7,26,29,.18);color:#fff;font-size:13px;line-height:1.4;backdrop-filter:blur(12px)}\n  button{box-sizing:border-box;border:1px solid transparent;border-radius:7px;min-height:36px;padding:7px 11px;background:transparent;color:#e0eeeb;font:inherit;font-weight:500;cursor:pointer;white-space:nowrap}\n  button:hover{background:rgba(255,255,255,.09)}\n  button:focus-visible{outline:2px solid #8edbcd;outline-offset:2px}\n  button:disabled{opacity:.45;cursor:default}\n  .bar>.edit-button{background:#1f9d8b;color:#fff;font-weight:600}\n  .bar>.edit-button:hover{background:#188b7c}\n  .drag-handle{cursor:grab;touch-action:none;user-select:none;padding:7px 4px;color:#8ba7a2;font-size:20px;line-height:1}\n  .drag-handle:active{cursor:grabbing}.drag-handle:focus-visible{outline:2px solid #8edbcd;border-radius:4px}\n  .brand{color:#a1beb8;text-decoration:none;font-weight:400;font-size:11px;padding:3px 6px 3px 12px;margin-left:2px;border-left:1px solid #ffffff24;white-space:nowrap}\n  .brand:hover{color:#c5e5dc}.brand:focus-visible{outline:2px solid #8edbcd;outline-offset:2px;border-radius:3px}\n  .file-status{flex-basis:100%;max-width:340px;padding:3px 6px;line-height:1.5;font-size:12px;overflow-wrap:anywhere}\n  .export-control{position:relative;display:inline-flex;align-items:center}\n  .export-trigger{display:inline-flex;align-items:center;gap:7px}\n  .export-trigger>span{display:flex;color:inherit}\n  .export-trigger svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}\n  .export-menu{position:absolute;z-index:30;bottom:calc(100% + 8px);left:0;box-sizing:border-box;width:184px;max-width:calc(100vw - 24px);overflow:auto;padding:5px;\n    background:#fff;color:#182022;border:1px solid #dfe5e7;border-radius:10px;box-shadow:0 8px 24px #102b2926}\n  .bar .export-menu button{display:flex;justify-content:flex-start;width:100%;min-height:36px;padding:8px 10px;background:transparent;color:#182022;border:0;text-align:left;font:500 13px/1.4 Inter,-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif}\n  .bar .export-menu button:hover,.bar .export-menu button:focus-visible{background:#edf7f5;color:#087f73}\n  .bar .export-menu button:focus-visible{outline:2px solid #1f9d8b;outline-offset:-2px}\n  .bar .export-menu .menu-separator{border-top:1px solid #e5ece9;border-radius:0 0 6px 6px;margin-top:4px;padding-top:11px}\n  @media(pointer:coarse){button,.bar .export-menu button{min-height:44px}.drag-handle{min-width:24px;padding:12px 6px}}\n  @media(max-width:520px){.bar:not(.editor) .brand{flex-basis:100%;text-align:right;border-left:0;padding:2px 6px}}\n\n  :host([data-toolbar-docking]:not([data-toolbar-paused])){transition:left .28s ease,top .28s ease,width .28s ease,height .28s ease}\n  :host([data-toolbar-docking]:not([data-toolbar-paused]))>.bar{width:max-content;transition:opacity .18s ease}\n  :host([data-toolbar-dragging]){transition:none!important}\n  :host([data-docked]){overflow:hidden;border-radius:10px;background:#071a1d;box-shadow:0 4px 16px #071a1d33}\n  :host([data-docked])>.bar{opacity:0;visibility:hidden;pointer-events:none}\n  :host([data-docked][data-dock-edge=left]){border-radius:0 10px 10px 0}\n  :host([data-docked][data-dock-edge=right]){border-radius:10px 0 0 10px}\n  :host([data-docked][data-dock-edge=top]){border-radius:0 0 10px 10px}\n  :host([data-docked][data-dock-edge=bottom]){border-radius:10px 10px 0 0}\n  .dock-tab{position:absolute;inset:0;width:100%;height:100%;padding:8px!important;border:0;border-radius:inherit!important;display:flex;align-items:center;justify-content:center;background:#071a1d!important;color:#8edbcd!important;cursor:pointer}\n  .dock-tab[hidden]{display:none!important}\n  .dock-tab svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}\n  .dock-tab:focus-visible{outline:2px solid #8edbcd;outline-offset:-3px}\n  @media(prefers-reduced-motion:reduce){:host([data-toolbar-docking]),:host([data-toolbar-docking])>.bar{transition:none!important}}\n","shortcuts":true,"imageExport":true,"noteCharacters":false,"text":{"edit":"Edit","expand":"Show editing toolbar","done":"Done","save":"Save copy","brand":"Made editable with PageOn","move":"Drag toolbar; use arrow keys to move","closeNotice":"Dismiss notice","warning":"Edits to this page's dynamic text are temporary; saving these edits is not supported. Done only exits editing. Save copy does not write edits back to component data. Re-rendering or reopening may overwrite edits with the original content."},"version":"0.2.2"},function createDeckEditSession(doc) {
   let restore = null;
   return {
     enter() {
@@ -956,8 +960,9 @@ return PageOnVisualExport.createVisualExporter;})(),function createFileSaver({ w
   listen(win, 'resize', () => close());
   listen(win, 'scroll', () => close(), true);
   return { trigger, panel, buttons, close, destroy() { close(); cleanups.forEach(fn => fn()); wrap.remove(); } };
-},function installNotes(doc, win, { onSelect, lang } = {}) {
+},function installNotes(doc, win, { onSelect, lang, noteCharacters = true } = {}, animationsFactory = createNoteAnimations) {
   win.PageOnNotes?.destroy();
+  const animations = animationsFactory({ allowCharacters: noteCharacters });
   const markersHidden = new win.URLSearchParams(win.location?.search || "").get("pageon-notes") === "off";
   const attr = "data-pageon-note";
   const text = node => (node?.getAttribute(attr) || "").trim().slice(0, 2000);
@@ -967,7 +972,7 @@ return PageOnVisualExport.createVisualExporter;})(),function createFileSaver({ w
   };
   const zh = (lang || doc.documentElement.lang || "en").startsWith("zh");
   const slideSelector = ".slide,[data-slide],.reveal .slides section";
-  let host, root, tip, observer, frame, timer, currentSlide, shown = 0, spaceDown = false, destroyed = false;
+  let presenter, host, root, tip, observer, frame, timer, currentSlide, shown = 0, spaceDown = false, destroyed = false;
   let nodes = [];
   const markers = new Map();
   const cleanups = [];
@@ -988,6 +993,26 @@ return PageOnVisualExport.createVisualExporter;})(),function createFileSaver({ w
     if (rect.width <= 0 || rect.height <= 0 || rect.bottom <= 0 || rect.right <= 0 || rect.top >= win.innerHeight || rect.left >= win.innerWidth) return null;
     return rect;
   };
+  const isPresentation = () => {
+    const groups = new Map();
+    for (const slide of doc.querySelectorAll(slideSelector)) {
+      if (slide.querySelector(slideSelector) || slide.closest('[data-pageon-extension],[data-artifact-no-reveal],[role="dialog"],.carousel,.swiper,.slider,[aria-roledescription="carousel"]')) continue;
+      if (slide.closest('.reveal .slides')) return true;
+      const siblings = groups.get(slide.parentElement) || [];
+      siblings.push(slide); groups.set(slide.parentElement, siblings);
+    }
+    for (const [parent, slides] of groups) {
+      if (slides.length < 2) continue;
+      if (slides.some(slide => slide.hasAttribute('data-slide')) || parent.matches('.slides,.slide-container,.presentation,.deck,[data-presentation]')) return true;
+      // A generic .slide class alone is insufficient: ordinary cards and
+      // carousels use it too. Require a page-sized slide on screen.
+      if (slides.some(slide => {
+        const rect = visibleRect(slide);
+        return rect && rect.width >= win.innerWidth * .6 && rect.height >= win.innerHeight * .6;
+      })) return true;
+    }
+    return false;
+  };
   const activeSlide = () => {
     const slides = [...doc.querySelectorAll(slideSelector)].filter(node =>
       !node.querySelector(slideSelector) && !node.closest('[data-artifact-no-reveal],[role="dialog"],[data-pageon-extension]'));
@@ -1002,6 +1027,8 @@ return PageOnVisualExport.createVisualExporter;})(),function createFileSaver({ w
   };
   const hide = () => {
     win.clearTimeout(timer);
+    presenter?.cancel(); presenter = null;
+    if (tip) animations.cancel(tip);
     if (tip) { tip.hidden = true; tip.textContent = ""; }
   };
   const syncSlide = () => {
@@ -1014,7 +1041,13 @@ return PageOnVisualExport.createVisualExporter;})(),function createFileSaver({ w
     if (!tip || !text(node)) return;
     tip.textContent = text(node);
     tip.hidden = false;
-    timer = win.setTimeout(hide, 2000);
+    if (animations.present && node.getAttribute("data-pageon-note-animation") === "companion") {
+      presenter = animations.present({ tip, root, node, character: node.getAttribute("data-pageon-note-character"),
+        onSettled: () => { timer = win.setTimeout(hide, 2000); } });
+    } else {
+      animations.play(tip, node.getAttribute("data-pageon-note-animation"));
+      timer = win.setTimeout(hide, 2000);
+    }
   };
   const refresh = () => {
     if (destroyed || !doc.body) return;
@@ -1022,7 +1055,7 @@ return PageOnVisualExport.createVisualExporter;})(),function createFileSaver({ w
       host = doc.createElement("pageon-notes");
       host.setAttribute("data-artifact-no-edit", "");
       host.setAttribute("data-pageon-extension", "");
-      host.style.cssText = "position:fixed!important;inset:0!important;z-index:2147483646!important;pointer-events:none!important;display:block!important;";
+      host.style.cssText = "position:fixed!important;inset:0!important;z-index:2147483646!important;pointer-events:none!important;display:block!important;overflow:hidden!important;";
       root = host.attachShadow({ mode: "open" });
       const style = doc.createElement("style");
       style.textContent = ':host{font:14px/1.5 system-ui,sans-serif;color-scheme:light dark}button{position:fixed;pointer-events:auto;width:24px;height:24px;padding:0;border:1px solid #fff;border-radius:50%;background:#0f766e;color:#fff;font:bold 12px/22px system-ui;box-shadow:0 1px 4px #0004;cursor:pointer}button:focus-visible{outline:2px solid #0f766e;outline-offset:3px}[hidden]{display:none!important}.tip{position:fixed;left:50%;bottom:32px;transform:translateX(-50%);box-sizing:border-box;width:max-content;max-width:min(640px,calc(100vw - 32px));max-height:40vh;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;background:#fff;color:#182022;padding:16px 20px;border:1px solid #dfe5e7;border-radius:12px;box-shadow:0 8px 32px #0004;pointer-events:auto;font:16px/1.6 system-ui,sans-serif}@media print{:host{display:none!important}}';
@@ -1034,10 +1067,24 @@ return PageOnVisualExport.createVisualExporter;})(),function createFileSaver({ w
       root.append(style, tip);
       doc.body.append(host);
     }
+    // Older exports forced selected text to black. Unconfigured ranges now
+    // inherit each original parent's color, including mixed-color selections.
+    for (const mark of doc.querySelectorAll('[data-pageon-note-range][data-pageon-note]')) {
+      const value = mark.getAttribute('data-pageon-note-text-color');
+      const color = /^#[0-9a-f]{6}$/i.test(value || '') ? value : 'inherit';
+      for (const property of ['color', '-webkit-text-fill-color']) {
+        const expected = property === 'color' && color !== 'inherit'
+          ? `rgb(${parseInt(color.slice(1, 3), 16)}, ${parseInt(color.slice(3, 5), 16)}, ${parseInt(color.slice(5, 7), 16)})` : color;
+        if (![color, expected].includes(mark.style.getPropertyValue(property)) || mark.style.getPropertyPriority(property) !== 'important')
+          mark.style.setProperty(property, color, 'important');
+      }
+    }
     nodes = unique([...doc.querySelectorAll(`[${attr}]`)].filter(node => text(node) && !node.closest('[data-pageon-extension],script,style,template')));
     for (const [node, marker] of markers) {
       if (!nodes.includes(node)) { marker.remove(); markers.delete(node); }
     }
+    const mode = doc.documentElement.getAttribute("data-pageon-note-markers");
+    const hideNumbers = !editing() && (mode === "edit" || (mode !== "always" && isPresentation()));
     nodes.forEach((node, index) => {
       if (markersHidden) return;
       let marker = markers.get(node);
@@ -1053,10 +1100,13 @@ return PageOnVisualExport.createVisualExporter;})(),function createFileSaver({ w
         markers.set(node, marker);
         root.append(marker);
       }
+      const color = node.getAttribute("data-pageon-note-color");
+      marker.style.backgroundColor = /^#[0-9a-f]{6}$/i.test(color || "") ? color : "#ffcc39";
+      marker.style.color = "#000";
       marker.textContent = String(index + 1);
       marker.setAttribute("aria-label", `${zh ? "批注" : "Note"} ${index + 1}`);
       const rect = visibleRect(node);
-      marker.hidden = !rect;
+      marker.hidden = hideNumbers || !rect;
       if (rect) {
         marker.style.left = `${Math.max(0, Math.min(win.innerWidth - 24, rect.right - 12))}px`;
         marker.style.top = `${Math.max(0, Math.min(win.innerHeight - 24, rect.top - 12))}px`;
@@ -1102,8 +1152,15 @@ return PageOnVisualExport.createVisualExporter;})(),function createFileSaver({ w
   listen(win, "keyup", event => { if (space(event) && spaceDown) { spaceDown = false; stop(event); } }, true);
   listen(doc, "pointerdown", event => { if (editing() && !event.composedPath().includes(host)) hide(); }, true);
   listen(win, "blur", () => { spaceDown = false; hide(); });
-  listen(win, "resize", schedule);
-  listen(doc, "scroll", schedule, true);
+  const reposition = () => { presenter?.reposition(); schedule(); };
+  listen(win, "resize", reposition);
+  listen(doc, "scroll", reposition, true);
+  if (win.visualViewport) { listen(win.visualViewport, "resize", reposition); listen(win.visualViewport, "scroll", reposition); }
+  listen(doc, "pageon:note-preview", event => {
+    const node = event.detail?.node;
+    if (node?.ownerDocument !== doc || !node.isConnected || node.closest("[data-pageon-extension]")) return;
+    refresh(); show(node);
+  });
   listen(doc, "transitionend", schedule, true);
   listen(doc, "animationend", schedule, true);
   listen(doc, "DOMContentLoaded", refresh);
@@ -1111,7 +1168,7 @@ return PageOnVisualExport.createVisualExporter;})(),function createFileSaver({ w
     if (records.some(record => record.target !== host && !host?.contains(record.target))) schedule();
   });
   observer.observe(doc.documentElement, { subtree: true, childList: true, characterData: true, attributes: true,
-    attributeFilter: [attr, "class", "style", "hidden", "inert", "aria-hidden", "data-artifact-mode", "data-artifact-local-edit"] });
+    attributeFilter: [attr, "data-pageon-note-text-color", "data-pageon-note-color", "data-pageon-note-markers", "class", "style", "hidden", "inert", "aria-hidden", "data-artifact-mode", "data-artifact-local-edit"] });
   refresh();
 
   const api = { refresh, setInputGuard(handler) { inputGuard = handler; }, destroy() {
@@ -1122,13 +1179,14 @@ return PageOnVisualExport.createVisualExporter;})(),function createFileSaver({ w
   } };
   win.PageOnNotes = api;
   return api;
-},function createOfflineNoteForm({ document, lang, onChange, onClose, createFloatingPanel, createNoteTarget, anchor }) {
+},function createOfflineNoteForm({ document, lang, onChange, onMarkerModeChange, onClose, createFloatingPanel, createNoteTarget, animations, anchor, paletteFactory = createColorPalette, paletteColors = DEFAULT_COLORS }) {
   const zh = lang === 'zh';
   const panel = document.createElement('section');
   panel.className = 'note-form';
   panel.hidden = true;
   const style = document.createElement('style');
-  style.textContent = '.note-form{box-sizing:border-box;position:fixed;z-index:2147483647;width:320px;max-width:calc(100vw - 16px);max-height:calc(100dvh - 16px);display:flex;flex-direction:column;overflow:hidden;border:1px solid #dfe5e7;border-radius:12px;padding:0;color-scheme:light;background:#fff;color:#182022;box-shadow:0 8px 24px #102b2926;font:13px/1.5 system-ui}.note-form[hidden]{display:none}.note-form .note-body{display:grid;gap:8px;padding:12px;overflow:auto;min-height:0}.note-form label{font-weight:600}.note-form p{margin:0;white-space:normal;line-height:1.5;overflow-wrap:anywhere;font-size:12px;color:#647178}.note-form .note-context{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.note-form textarea{box-sizing:border-box;width:100%;height:96px;min-height:64px;max-height:180px;resize:vertical;border:1px solid #dfe5e7;border-radius:6px;padding:8px;background:#fff;color:#182022;font:14px/1.5 system-ui}.note-form button{box-sizing:border-box;border:1px solid #dfe5e7;border-radius:6px;padding:6px 8px;background:transparent;color:inherit;font:inherit;cursor:pointer}.note-form button:hover{background:#edf7f5}.note-form :is(textarea,button):focus-visible{outline:2px solid #1f9d8b;outline-offset:-2px}.note-form :disabled{opacity:.5;cursor:default}@media print{.note-form{display:none!important}}';
+  style.textContent = '.note-form{box-sizing:border-box;position:fixed;z-index:2147483647;width:320px;max-width:calc(100vw - 16px);max-height:calc(100dvh - 16px);display:flex;flex-direction:column;overflow:hidden;border:1px solid #dfe5e7;border-radius:12px;padding:0;color-scheme:light;background:#fff;color:#182022;box-shadow:0 8px 24px #102b2926;font:13px/1.5 system-ui}.note-form[hidden]{display:none}.note-form .note-body{display:grid;gap:8px;padding:12px;overflow:auto;min-height:0}.note-form label{font-weight:600}.note-form p{margin:0;white-space:normal;line-height:1.5;overflow-wrap:anywhere;font-size:12px;color:#647178}.note-form .note-context{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.note-form textarea{box-sizing:border-box;width:100%;height:64px;min-height:48px;max-height:128px;resize:vertical;border:1px solid #dfe5e7;border-radius:6px;padding:8px;background:#fff;color:#182022;font:14px/1.5 system-ui}.note-form button{box-sizing:border-box;border:1px solid #dfe5e7;border-radius:6px;padding:6px 8px;background:transparent;color:inherit;font:inherit;cursor:pointer}.note-form button:hover{background:#edf7f5}.note-form select{box-sizing:border-box;width:100%;border:1px solid #dfe5e7;border-radius:6px;padding:8px;background:#fff;color:#182022;font:14px/1.5 system-ui}.note-form [hidden]{display:none!important}.note-form .note-character-options{display:grid;gap:8px}.note-form .note-character-row{display:flex;gap:12px;align-items:center}.note-form .note-character-row img{width:40px;height:40px;object-fit:contain}.note-form .note-file{position:relative;display:flex;gap:8px;align-items:center;border:1px solid #dfe5e7;border-radius:6px;padding:8px;overflow:hidden}.note-form .note-file input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}.note-form .note-file:focus-within{outline:2px solid #1f9d8b;outline-offset:-2px}.note-form .note-file span{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.note-form :is(textarea,button,select):focus-visible{outline:2px solid #1f9d8b;outline-offset:-2px}.note-form :disabled{opacity:.5;cursor:default}@media print{.note-form{display:none!important}}';
+  style.textContent += '.note-form summary{cursor:pointer;font-size:12px;padding:4px 0}.note-form summary:focus-visible{outline:2px solid #159d89;outline-offset:2px}.note-form details>label,.note-form details>p{display:block;margin-top:8px}.note-form .note-actions{display:flex;gap:8px}.note-form .note-character-options{padding-top:8px}';
   panel.setAttribute('role', 'dialog');
   panel.setAttribute('aria-label', zh ? '批注' : 'Notes');
   const body = document.createElement('div'); body.className = 'note-body';
@@ -1142,22 +1200,130 @@ return PageOnVisualExport.createVisualExporter;})(),function createFileSaver({ w
   input.id = 'pageon-note-text';
   input.maxLength = 2000;
   input.setAttribute('aria-describedby', context.id);
+  const animationLabel = document.createElement('label');
+  animationLabel.htmlFor = 'pageon-note-animation';
+  animationLabel.textContent = zh ? '出现方式' : 'Entrance animation';
+  const animation = document.createElement('select');
+  animation.id = 'pageon-note-animation';
+  for (const effect of animations.effects) {
+    const option = document.createElement('option'); option.value = effect.id;
+    option.textContent = effect.label[zh ? 'zh' : 'en']; animation.append(option);
+  }
+  const selectAnimation = id => {
+    const options = [...animation.options];
+    options.forEach(option => { option.selected = false; });
+    const chosen = options.find(option => option.value === id);
+    if (chosen) chosen.selected = true;
+  };
+  const highlight = document.createElement('div');
+  let highlightColor = '#ffcc39';
+  const highlightPalette = paletteFactory(highlight, { compact: true, customLabel: zh ? '自定义颜色' : 'Custom color', colors: paletteColors, label: zh ? '批注颜色' : 'Note color',
+    onChange: color => { highlightColor = color; renderHighlight(); change(); } });
+
+  const renderHighlight = () => {
+    highlight.hidden = !selected;
+    highlightPalette.update({ value: highlightColor, disabled: !selected });
+  };
+  const foreground = document.createElement('div');
+  const originalColor = document.createElement('button'); originalColor.type = 'button';
+  originalColor.textContent = zh ? '使用原色' : 'Use original color';
+  let textColor = '';
+  const foregroundPalette = paletteFactory(foreground, { compact: true, customLabel: zh ? '自定义颜色' : 'Custom color', colors: paletteColors, label: zh ? '划选文字颜色' : 'Selected text color',
+    onChange: color => { textColor = color; renderForeground(); change(); } });
+  foreground.prepend(originalColor);
+  const renderForeground = () => {
+    foreground.hidden = !target?.inline;
+    originalColor.setAttribute('aria-pressed', String(!textColor));
+    foregroundPalette.update({ value: textColor, disabled: !selected });
+  };
+  originalColor.addEventListener('click', () => { textColor = ''; renderForeground(); change(); });
+  const characterDetails = document.createElement('details');
+  const characterSummary = document.createElement('summary'); characterSummary.textContent = zh ? '角色形象' : 'Character'; characterDetails.append(characterSummary);
+  const appearance = document.createElement('div'); appearance.className = 'note-character-options'; appearance.hidden = true; characterDetails.append(appearance);
+  const characterLabel = document.createElement('label'); characterLabel.htmlFor = 'pageon-note-character'; characterLabel.textContent = zh ? '角色形象' : 'Character';
+  const row = document.createElement('div'); row.className = 'note-character-row';
+  const avatar = document.createElement('img'); avatar.alt = '';
+  const characterSelect = document.createElement('select'); characterSelect.id = 'pageon-note-character';
+  animations.characters.forEach(item => { const option = document.createElement('option'); option.value = item.id; option.textContent = item.label[zh ? 'zh' : 'en']; characterSelect.append(option); });
+  row.append(avatar, characterSelect);
+  const palette = document.createElement('div');
+  const characterPalette = paletteFactory(palette, { compact: true, customLabel: zh ? '自定义颜色' : 'Custom color', colors: paletteColors, label: zh ? '角色颜色' : 'Character color', onChange: color => changeCharacter({ color }) });
+  const upload = document.createElement('div');
+  const fileLabel = document.createElement('label'); fileLabel.htmlFor = 'pageon-note-image'; fileLabel.textContent = zh ? '上传角色图片' : 'Upload character image';
+  const fileField = document.createElement('div'); fileField.className = 'note-file';
+  const file = document.createElement('input'); file.type = 'file'; file.id = 'pageon-note-image'; file.accept = 'image/png,image/webp,image/jpeg';
+  const fileName = document.createElement('span'); fileName.setAttribute('aria-hidden', 'true');
+  fileField.append(file, fileName);
+  const uploadHint = document.createElement('p'); uploadHint.textContent = zh ? '支持 PNG、WebP、JPG（最大 2 MB），推荐透明背景。图片随 HTML 保存。' : 'PNG, WebP or JPG, up to 2 MB. Transparent backgrounds work best. The image is saved in the HTML.';
+  upload.append(fileLabel, fileField, uploadHint);
+  const error = document.createElement('p'); error.setAttribute('role', 'status');
+  const motionHint = document.createElement('p'); motionHint.textContent = zh ? '随机跳跃、滚动或滑行，停稳后在角色旁显示文字。' : 'A random hop, roll or glide, then text appears beside the character.';
+  appearance.append(characterLabel, row, palette, upload, error, motionHint);
+  let character = '', uploadVersion = 0;
+  const renderCharacter = () => {
+    const config = animations.normalizeCharacter(character);
+    characterDetails.hidden = appearance.hidden = animation.value !== 'companion';
+    [...characterSelect.options].forEach(option => { option.selected = false; });
+    [...characterSelect.options].find(option => option.value === config.id).selected = true;
+    avatar.src = animations.characterImage(config); palette.hidden = config.id === 'custom'; upload.hidden = config.id !== 'custom';
+    characterPalette.update({ value: config.color, disabled: !selected });
+    fileName.textContent = zh ? (config.image ? '已保存图片 · 点击替换' : '选择图片') : (config.image ? 'Image saved · Replace' : 'Choose image');
+  };
+  const invalidateUpload = () => { uploadVersion++; file.disabled = false; error.textContent = ''; };
+  const changeCharacter = patch => {
+    invalidateUpload(); character = JSON.stringify(animations.normalizeCharacter({ ...animations.normalizeCharacter(character), ...patch })); renderCharacter(); change();
+  };
+  characterSelect.addEventListener('change', () => changeCharacter({ id: characterSelect.value }));
+  file.addEventListener('change', async () => {
+    if (!file.files?.[0]) return;
+    const version = ++uploadVersion, currentTarget = target;
+    file.disabled = true; error.textContent = zh ? '正在处理图片…' : 'Processing image…';
+    try {
+      const image = await animations.readImage(file.files[0], document);
+      if (version !== uploadVersion || target !== currentTarget || !selected?.isConnected) return;
+      character = JSON.stringify(animations.normalizeCharacter({ ...animations.normalizeCharacter(character), id: 'custom', image }));
+      renderCharacter(); change(); error.textContent = '';
+    } catch { if (version === uploadVersion) error.textContent = zh ? '图片无法读取，请选择 2 MB 以内的 PNG、WebP 或 JPG。' : 'Could not read the image. Choose a PNG, WebP or JPG under 2 MB.'; }
+    finally { if (version === uploadVersion) { file.disabled = false; file.value = ''; } }
+  });
+  const more = document.createElement('details'); const moreSummary = document.createElement('summary'); moreSummary.textContent = zh ? '更多设置' : 'More settings'; more.append(moreSummary);
+  const markerLabel = document.createElement('label'); markerLabel.htmlFor = 'pageon-note-markers'; markerLabel.textContent = zh ? '批注标记（整个文档）' : 'Note markers (whole document)';
+  const markerMode = document.createElement('select'); markerMode.id = markerLabel.htmlFor;
+  for (const [value, label] of [['auto', zh ? '自动' : 'Auto'], ['always', zh ? '始终显示' : 'Always show'], ['edit', zh ? '仅编辑时显示' : 'Show only while editing']]) {
+    const option = document.createElement('option'); option.value = value; option.textContent = label; markerMode.append(option);
+  }
+  const selectMarkerMode = () => {
+    const value = document.documentElement.getAttribute('data-pageon-note-markers');
+    const mode = ['always', 'edit'].includes(value) ? value : 'auto';
+    [...markerMode.options].forEach(option => { option.selected = false; });
+    [...markerMode.options].find(option => option.value === mode).selected = true;
+  };
+  markerMode.addEventListener('change', () => onMarkerModeChange?.(markerMode.value));
+  const markerHint = document.createElement('p'); markerHint.textContent = zh ? '自动：演示稿预览和播放时隐藏序号，普通文档显示。高亮背景始终保留。' : 'Auto: hide numbers when previewing or presenting slides; show them in ordinary documents. Highlight backgrounds stay visible.';
+  const preview = document.createElement('button'); preview.type = 'button'; preview.className = 'note-preview'; preview.textContent = zh ? '预览效果' : 'Preview';
+  preview.addEventListener('click', () => { if (target?.read()) document.dispatchEvent(new document.defaultView.CustomEvent('pageon:note-preview', { detail: { node: target.node } })); });
   const remove = document.createElement('button');
   remove.type = 'button';
   remove.className = 'note-delete';
   remove.textContent = zh ? '删除批注' : 'Delete note';
   const hint = document.createElement('p');
   hint.textContent = zh ? '修改即时生效；请使用工具栏的保存或保存副本保留到 HTML。' : 'Changes apply immediately. Use Save or Save copy in the toolbar to keep them in the HTML.';
-  let selected = null, target = null, lastNote = null;
+  let selected = null, target = null, lastNote = null, lastAnimation = null;
   const select = node => {
+    selectMarkerMode();
     const next = node?.isConnected ? node : null;
     if (selected !== next) { hide(); target = createNoteTarget(next, { capture: false }); }
     const note = target?.read() || '';
-    if (selected === next && lastNote === note) return;
-    selected = next; lastNote = note;
+    const effect = animations.normalize(target?.animation);
+    if (selected === next && lastNote === note && (!note || (lastAnimation === effect && character === (target?.character || '') && highlightColor === target?.color && textColor === target?.textColor))) return;
+    selected = next; lastNote = note; lastAnimation = effect;
+    character = target?.character || '';
+    highlightColor = target?.color || '#ffcc39'; renderHighlight();
+    textColor = target?.textColor || ''; renderForeground();
+    selectAnimation(effect); renderCharacter(); animation.disabled = !selected;
     input.disabled = !selected;
     input.value = note;
-    remove.disabled = !note;
+    remove.disabled = preview.disabled = !note;
     context.textContent = selected
       ? (zh ? '已选择：' : 'Selected: ') + (target?.text || selected.getAttribute('alt') || selected.localName).trim().slice(0, 80)
       : (zh ? '选择元素或划选文字，再点击批注。' : 'Select an element or text, then click Notes.');
@@ -1165,15 +1331,25 @@ return PageOnVisualExport.createVisualExporter;})(),function createFileSaver({ w
   const change = () => {
     if (!selected?.isConnected) { select(null); return; }
     lastNote = input.value.trim().slice(0, 2000);
-    onChange(selected, input.value.slice(0, 2000), target);
-    remove.disabled = !target?.read();
+    lastAnimation = animation.value;
+    onChange(selected, input.value.slice(0, 2000), target, animation.value, character, highlightColor, textColor);
+    remove.disabled = preview.disabled = !target?.read();
   };
   input.addEventListener('input', change);
+  animation.addEventListener('change', () => { invalidateUpload(); renderCharacter(); change(); });
   remove.addEventListener('click', () => { input.value = ''; change(); dismiss(); });
-  body.append(label, context, input, remove, hint);
+  for (const summary of [characterSummary, moreSummary]) {
+    const chevron = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    chevron.setAttribute('viewBox', '0 0 24 24'); chevron.setAttribute('aria-hidden', 'true');
+    chevron.innerHTML = '<path d="m6 9 6 6 6-6"/>'; summary.prepend(chevron);
+  }
+  style.textContent += '.note-form summary{display:flex;align-items:center;gap:8px;list-style:none;border-radius:6px;padding:6px}.note-form summary::-webkit-details-marker{display:none}.note-form summary svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;transform:rotate(-90deg)}.note-form details[open]>summary svg{transform:none}.note-form summary:focus-visible{outline:2px solid #159d89;outline-offset:-2px}';
+  more.append(markerLabel, markerMode, markerHint, hint);
+  const actions = document.createElement('div'); actions.className = 'note-actions'; actions.append(preview, remove);
+  body.append(label, context, input, highlight, foreground, animationLabel, animation, ...(animations.normalize('companion') === 'companion' ? [characterDetails] : []), more, actions);
   panel.append(style, body);
   let floating;
-  const hide = () => { panel.hidden = true; onClose?.(); };
+  const hide = () => { invalidateUpload(); highlightPalette.collapse(); foregroundPalette.collapse(); characterPalette.collapse(); panel.hidden = true; onClose?.(); };
   const dismiss = () => { hide(); anchor?.focus?.({ preventScroll: true }); };
   panel.addEventListener('keydown', event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); dismiss(); } });
   const cleanups = [];
@@ -1186,9 +1362,14 @@ return PageOnVisualExport.createVisualExporter;})(),function createFileSaver({ w
     hide();
   };
   const show = (capture = true) => {
+    selectMarkerMode();
     if (!selected) return;
     target = createNoteTarget(selected, { capture });
-    input.value = target.read(); lastNote = input.value; remove.disabled = !input.value;
+    selectAnimation(animations.normalize(target.animation)); lastAnimation = animation.value;
+    character = target.character; renderCharacter();
+    highlightColor = target.color; renderHighlight();
+    textColor = target.textColor; renderForeground();
+    input.value = target.read(); lastNote = input.value; remove.disabled = preview.disabled = !input.value;
     context.textContent = (zh ? '已选择：' : 'Selected: ') + (target.text || selected.getAttribute('alt') || selected.localName).trim().slice(0, 80);
     if (!bound) {
       bound = true;
@@ -1202,8 +1383,8 @@ return PageOnVisualExport.createVisualExporter;})(),function createFileSaver({ w
     floating.refresh();
   };
   select(null);
-  return { panel, select, input, show, hide, close: dismiss, refresh: () => floating?.refresh(), destroy: () => { floating?.destroy(); cleanups.forEach(fn => fn()); panel.remove(); } };
-},function createFloatingPanel({ panel, win, anchor }) {
+  return { panel, select, input, show, hide, close: dismiss, refresh: () => floating?.refresh(), destroy: () => { highlightPalette.destroy(); foregroundPalette.destroy(); characterPalette.destroy(); invalidateUpload(); floating?.destroy(); cleanups.forEach(fn => fn()); panel.remove(); } };
+},function createFloatingPanel({ panel, win, anchor, maxHeight = 520 }) {
   const cleanups = [];
   const listen = (target, type, fn, capture = false) => {
     target?.addEventListener(type, fn, capture);
@@ -1218,7 +1399,7 @@ return PageOnVisualExport.createVisualExporter;})(),function createFileSaver({ w
     if (panel.hidden) return;
     const view = bounds(), margin = 8;
     Object.assign(panel.style, { position: 'fixed', width: Math.min(320, Math.max(0, view.width - 16)) + 'px',
-      maxWidth: Math.max(0, view.width - 16) + 'px', maxHeight: Math.max(0, view.height - 16) + 'px', right: 'auto', bottom: 'auto' });
+      maxWidth: Math.max(0, view.width - 16) + 'px', maxHeight: Math.max(0, Math.min(maxHeight, view.height - 16)) + 'px', right: 'auto', bottom: 'auto' });
     const rect = panel.getBoundingClientRect();
     const width = Math.min(rect.width || 320, view.width - 16), height = Math.min(rect.height || 260, view.height - 16);
     const target = anchor?.getBoundingClientRect();
@@ -1239,6 +1420,7 @@ return PageOnVisualExport.createVisualExporter;})(),function createFileSaver({ w
   return { refresh, destroy() { cleanups.forEach(fn => fn()); observer?.disconnect(); } };
 },function createNoteTarget(node, { capture = true } = {}) {
   const doc = node?.ownerDocument;
+  const normalizeColor = value => /^#[0-9a-f]{6}$/i.test(value || "") ? value.toLowerCase() : "#ffcc39";
   const ownerSelector = '[data-artifact-edit],[data-artifact-local-node],[data-artifact-node]';
   const element = value => value?.nodeType === 1 ? value : value?.parentElement;
   const owner = value => element(value)?.closest('[data-artifact-edit],[data-artifact-local-node]') || element(value)?.closest(ownerSelector);
@@ -1270,9 +1452,29 @@ return PageOnVisualExport.createVisualExporter;})(),function createFileSaver({ w
     get inline() { return !!group || segments.length > 0; },
     get text() { return segments.length ? segments.map(part => part.original.slice(part.start, part.end)).join('') : (marks().length ? marks().map(mark => mark.textContent).join('') : selected?.textContent || ''); },
     read() { return segments.length ? '' : ((group ? marks()[0] : selected)?.getAttribute('data-pageon-note') || ''); },
-    write(value) {
+    get animation() { return segments.length ? "none" : ((group ? marks()[0] : selected)?.getAttribute("data-pageon-note-animation") || "none"); },
+    get character() { return segments.length ? "" : ((group ? marks()[0] : selected)?.getAttribute("data-pageon-note-character") || ""); },
+    get color() { return normalizeColor(segments.length ? null : (group ? marks()[0] : selected)?.getAttribute("data-pageon-note-color")); },
+    get textColor() {
+      const value = segments.length ? '' : (group ? marks()[0] : selected)?.getAttribute('data-pageon-note-text-color');
+      return /^#[0-9a-f]{6}$/i.test(value || '') ? value.toLowerCase() : '';
+    },
+    write(value, animation = api.animation, character = api.character, color = api.color, textColor = api.textColor) {
+      textColor = /^#[0-9a-f]{6}$/i.test(textColor || '') ? textColor.toLowerCase() : '';
+      color = normalizeColor(color);
       const note = String(value || '').trim().slice(0, 2000);
-      if (note === api.read() && !segments.length) return null;
+      animation = typeof animation === "string" && /^[a-z][a-z0-9-]{0,63}$/.test(animation) ? animation : "none";
+      character = typeof character === "string" && character.length <= 190000 ? character : "";
+      const writeAnimation = node => {
+        if (note) node.setAttribute("data-pageon-note-color", color);
+        else node.removeAttribute("data-pageon-note-color");
+        if (note && character) node.setAttribute("data-pageon-note-character", character);
+        else node.removeAttribute("data-pageon-note-character");
+        if (note && animation !== "none") node.setAttribute("data-pageon-note-animation", animation);
+        else node.removeAttribute("data-pageon-note-animation");
+      };
+      if (note === api.read() && animation === api.animation && character === api.character && color === api.color && textColor === api.textColor && !segments.length) return null;
+      if (!note && !api.read()) return null;
       const changed = new Set();
       if (segments.length) {
         if (!note || segments.some(part => !part.text.isConnected || part.text.data !== part.original)) return null;
@@ -1295,9 +1497,6 @@ return PageOnVisualExport.createVisualExporter;})(),function createFileSaver({ w
             font: 'inherit', 'line-height': 'inherit', 'vertical-align': 'baseline',
             'white-space': 'inherit', 'letter-spacing': 'inherit', transform: 'none',
           })) mark.style.setProperty(property, value, 'important');
-          mark.style.setProperty('background-color', '#ffeb3b', 'important');
-          mark.style.setProperty('color', '#000000', 'important');
-          mark.style.setProperty('-webkit-text-fill-color', '#000000', 'important');
           chosen.before(mark); mark.append(chosen);
         }
         segments = [];
@@ -1306,7 +1505,14 @@ return PageOnVisualExport.createVisualExporter;})(),function createFileSaver({ w
         const nodes = marks();
         for (const mark of nodes) {
           const parent = owner(mark.parentElement); if (parent) changed.add(parent);
-          if (note) mark.setAttribute('data-pageon-note', note);
+          if (note) {
+            mark.setAttribute('data-pageon-note', note); writeAnimation(mark);
+            mark.style.setProperty('background-color', color, 'important');
+            if (textColor) mark.setAttribute('data-pageon-note-text-color', textColor);
+            else mark.removeAttribute('data-pageon-note-text-color');
+            mark.style.setProperty('color', textColor || 'inherit', 'important');
+            mark.style.setProperty('-webkit-text-fill-color', textColor || 'inherit', 'important');
+          }
           else {
             // Keep the selected text available if the user clears the note
             // and types again without closing the immediate-edit panel.
@@ -1324,9 +1530,318 @@ return PageOnVisualExport.createVisualExporter;})(),function createFileSaver({ w
       }
       if (!selected?.isConnected) return null;
       if (note) selected.setAttribute('data-pageon-note', note); else selected.removeAttribute('data-pageon-note');
+      writeAnimation(selected);
       return { inline: false, owners: [selected], node: selected };
     },
   };
   return api;
+},function createNoteAnimations({ allowCharacters = true } = {}) {
+  const registry = new Map();
+  const active = new WeakMap();
+  const lastPositions = new WeakMap();
+  const register = effect => {
+    if (!effect || !/^[a-z][a-z0-9-]{0,63}$/.test(effect.id) || registry.has(effect.id) ||
+      typeof effect.label?.zh !== 'string' || typeof effect.label?.en !== 'string' ||
+      !Array.isArray(effect.keyframes) || !Number.isFinite(effect.duration) || effect.duration < 0) {
+      throw new TypeError('invalid-note-animation');
+    }
+    const value = Object.freeze({ ...effect, label: Object.freeze({ ...effect.label }),
+      keyframes: Object.freeze(effect.keyframes.map(frame => Object.freeze({ ...frame }))) });
+    registry.set(value.id, value);
+  };
+  register({ id: 'none', label: { zh: '无动画', en: 'None' }, duration: 0, keyframes: [] });
+  register({ id: 'fade', label: { zh: '淡入', en: 'Fade in' }, duration: 220,
+    keyframes: [{ opacity: 0 }, { opacity: 1 }] });
+  register({ id: 'fly', label: { zh: '飞入', en: 'Fly in' }, duration: 280,
+    keyframes: [{ opacity: 0, translate: '0 24px' }, { opacity: 1, translate: '0 0' }] });
+  register({ id: 'zoom', label: { zh: '缩放', en: 'Zoom in' }, duration: 240,
+    keyframes: [{ opacity: 0, scale: '0.9' }, { opacity: 1, scale: '1' }] });
+  if (allowCharacters) register({ id: 'companion', label: { zh: '角色随机入场', en: 'Character entrance' }, duration: 0, keyframes: [] });
+  const normalize = id => registry.has(id) ? id : 'none';
+  const cancel = element => {
+    const animation = active.get(element);
+    active.delete(element);
+    animation?.cancel();
+  };
+  const play = (element, id) => {
+    cancel(element);
+    const effect = registry.get(normalize(id));
+    const win = element?.ownerDocument?.defaultView;
+    if (!effect.duration || !element?.animate || win?.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return null;
+    let animation;
+    try {
+      animation = element.animate(effect.keyframes, { duration: effect.duration, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)', fill: 'none' });
+    } catch { return null; } // Older engines still show the fully readable card.
+    active.set(element, animation);
+    const release = () => { if (active.get(element) === animation) active.delete(element); };
+    animation.finished?.then(release, release);
+    return animation;
+  };
+  const characters = [
+    { id: 'dot', label: { zh: '圆圈', en: 'Circle' } },
+    { id: 'blob', label: { zh: '软糖', en: 'Jelly' } },
+    { id: 'spark', label: { zh: '小星', en: 'Spark' } },
+    { id: 'frog', label: { zh: '小蛙', en: 'Frog' } },
+    { id: 'custom', label: { zh: '自己的图片', en: 'My image' } },
+  ];
+  const normalizeCharacter = raw => {
+    let value = raw;
+    if (typeof raw === 'string') { try { value = raw.length <= 190000 ? JSON.parse(raw) : null; } catch { value = null; } }
+    const id = characters.some(item => item.id === value?.id) ? value.id : 'dot';
+    const color = /^#[0-9a-f]{6}$/i.test(value?.color || '') ? value.color : '#4678ff';
+    const image = typeof value?.image === 'string' && value.image.length <= 180000 && /^data:image\/(png|webp|jpeg);base64,[a-z0-9+/]+=*$/i.test(value.image) ? value.image : '';
+    return { id, color, image };
+  };
+  const characterImage = raw => {
+    const { id, color, image } = normalizeCharacter(raw);
+    if (id === 'custom' && image) return image;
+    const eyes = '<ellipse cx="38" cy="49" rx="3.4" ry="5" fill="#192536"/><ellipse cx="58" cy="49" rx="3.4" ry="5" fill="#192536"/><circle cx="39" cy="47" r="1" fill="white"/><circle cx="59" cy="47" r="1" fill="white"/>';
+    const smile = '<path d="M42 61 Q48 66 54 61" fill="none" stroke="#192536" stroke-width="2.5" stroke-linecap="round"/>';
+    const body = id === 'blob'
+      ? '<path d="M25 22 Q28 10 40 17 Q50 7 60 19 Q76 15 77 32 Q91 40 80 55 Q87 71 70 75 Q62 91 48 80 Q32 90 25 75 Q8 71 17 55 Q5 39 20 32Z" fill="url(#body)"/><ellipse cx="45" cy="22" rx="25" ry="9" transform="rotate(-18 45 22)" fill="#202b38"/>' + eyes + smile
+      : id === 'spark'
+      ? '<path d="M36 18 Q48 5 60 18 L82 64 Q90 84 68 84 H28 Q6 84 14 64Z" fill="url(#body)"/>' + eyes + '<g fill="none" stroke="#273344" stroke-width="2.5"><ellipse cx="36" cy="48" rx="12" ry="15"/><ellipse cx="60" cy="48" rx="12" ry="15"/><path d="M48 46 h0"/></g><path d="M33 77 L48 82 L63 77 V90 L48 84 L33 90Z" fill="#273344"/>'
+      : id === 'frog'
+      ? '<path d="M20 38 Q10 12 32 13 Q46 13 48 30 Q50 13 64 13 Q86 12 76 38 Q92 48 82 70 Q76 85 48 84 Q20 85 14 70 Q4 48 20 38Z" fill="url(#body)"/><g fill="white"><ellipse cx="31" cy="28" rx="10" ry="12"/><ellipse cx="65" cy="28" rx="10" ry="12"/></g><g fill="#192536"><ellipse cx="32" cy="29" rx="5" ry="7"/><ellipse cx="64" cy="29" rx="5" ry="7"/></g>' + smile
+      : '<path d="M84 48a36 36 0 1 0-72 0a36 36 0 1 0 72 0M64 48a16 16 0 1 0-32 0a16 16 0 1 0 32 0" fill="url(#body)" fill-rule="evenodd"/>';
+    return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96"><defs><radialGradient id="body" cx="30%" cy="22%" r="85%"><stop stop-color="' + color + '"/><stop offset=".65" stop-color="' + color + '"/><stop offset="1" stop-color="' + color + '"/></radialGradient></defs>' + body + '</svg>');
+  };
+  const readImage = (file, doc) => new Promise((resolve, reject) => {
+    if (!file || !['image/png', 'image/webp', 'image/jpeg'].includes(file.type)) { reject(new Error('character-image-type')); return; }
+    if (file.size > 2 * 1024 * 1024) { reject(new Error('character-image-size')); return; }
+    const win = doc.defaultView, reader = new win.FileReader();
+    reader.onerror = () => reject(new Error('character-image-decode'));
+    reader.onload = () => {
+      const img = new win.Image();
+      img.onerror = () => reject(new Error('character-image-decode'));
+      img.onload = () => {
+        try {
+          if (!img.naturalWidth || !img.naturalHeight || img.naturalWidth * img.naturalHeight > 40000000) throw new Error('character-image-size');
+          const ratio = Math.min(1, 256 / Math.max(img.naturalWidth, img.naturalHeight));
+          const canvas = doc.createElement('canvas'); canvas.width = Math.max(1, Math.round(img.naturalWidth * ratio)); canvas.height = Math.max(1, Math.round(img.naturalHeight * ratio));
+          canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+          let image = canvas.toDataURL('image/png');
+          if (image.length > 180000) {
+            canvas.width = Math.max(1, Math.round(canvas.width / 2)); canvas.height = Math.max(1, Math.round(canvas.height / 2));
+            canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height); image = canvas.toDataURL('image/png');
+          }
+          if (image.length > 180000) throw new Error('character-image-size');
+          resolve(image);
+        } catch (error) { reject(error); }
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+  // All coordinates, including every motion waypoint, are inside the visual viewport.
+  const layout = ({ viewport, anchor, destination, bubbleWidth = 300, bubbleHeight = 100 }) => {
+    const { width: w, height: h, left = 0, top = 0 } = viewport;
+    const margin = Math.min(96, Math.max(24, Math.min(w, h) * .08), w / 8, h / 8);
+    const gap = Math.min(12, w / 12, h / 12);
+    const size = Math.max(0, Math.min(76, w - 2 * margin, (h - 2 * margin - gap) / 2));
+    const horizontal = w >= size + gap + 180 + 2 * margin;
+    const bw = Math.max(0, Math.min(bubbleWidth, w - 2 * margin - (horizontal ? size + gap : 0)));
+    const bh = Math.max(0, Math.min(bubbleHeight, h - 2 * margin - (horizontal ? 0 : size + gap)));
+    const gw = horizontal ? size + gap + bw : Math.max(size, bw), gh = horizontal ? Math.max(size, bh) : size + gap + bh;
+    const clamp = (n, a, b) => Math.min(Math.max(n, a), Math.max(a, b));
+    const center = destination ? left + w * destination.x : anchor ? (anchor.left + anchor.right) / 2 : left + w / 2;
+    const x = destination ? left + margin + Math.max(0, w - 2 * margin - gw) * destination.x
+      : clamp(center - gw / 2, left + margin, left + w - margin - gw);
+    const y = destination ? top + margin + Math.max(0, h - 2 * margin - gh) * destination.y
+      : clamp(anchor ? anchor.bottom + 16 : top + h - margin - gh, top + margin, top + h - margin - gh);
+    const bubbleOnLeft = horizontal && center > left + w / 2;
+    return {
+      actor: { x: x + (horizontal ? (bubbleOnLeft ? bw + gap : 0) : (gw - size) / 2), y: y + (horizontal ? (gh - size) / 2 : bh + gap), size },
+      bubble: { x: x + (horizontal && !bubbleOnLeft ? size + gap : 0), y: y + (horizontal ? (gh - bh) / 2 : 0), width: bw, height: bh },
+      side: horizontal ? (bubbleOnLeft ? 'left' : 'right') : 'top', margin,
+    };
+  };
+  const present = ({ tip, root, node, character, onSettled }) => {
+    const doc = tip.ownerDocument, win = doc.defaultView;
+    // Sample at playback time, never when generating or saving the HTML.
+    const random = () => win.Math.random();
+    const between = (low, high) => low + random() * (high - low);
+    const mode = Math.floor(random() * 3), edge = Math.floor(random() * 4);
+    const previous = lastPositions.get(doc);
+    let destination;
+    let stopped = false, settled = false, fallback;
+    const motions = [];
+    const actor = doc.createElement('div'); actor.className = 'note-character'; actor.setAttribute('aria-hidden', 'true');
+    actor.style.cssText = 'position:fixed;pointer-events:none;overflow:hidden;z-index:1;';
+    const avatar = doc.createElement('img'); avatar.alt = ''; avatar.src = characterImage(character);
+    avatar.style.cssText = 'display:block;width:100%;height:100%;object-fit:contain;'; actor.append(avatar); root.append(actor);
+    tip.style.cssText = 'visibility:hidden;transform:none;bottom:auto;box-shadow:0 6px 24px #102b2924;border-radius:18px;';
+    tip.hidden = false;
+    const viewport = () => ({ left: win.visualViewport?.offsetLeft || 0, top: win.visualViewport?.offsetTop || 0,
+      width: win.visualViewport?.width || win.innerWidth, height: win.visualViewport?.height || win.innerHeight });
+    const position = () => {
+      const view = viewport(), anchor = node?.getBoundingClientRect?.();
+      const limits = layout({ viewport: view, anchor, bubbleHeight: view.height });
+      tip.style.maxWidth = limits.bubble.width + 'px'; tip.style.maxHeight = limits.bubble.height + 'px';
+      tip.style.minWidth = '0'; tip.style.padding = Math.min(14, view.height / 12, view.width / 12) + 'px';
+      const rect = tip.getBoundingClientRect();
+      const place = target => layout({ viewport: view, destination: target, bubbleWidth: rect.width || limits.bubble.width, bubbleHeight: rect.height || 80 });
+      if (!destination) {
+        const distance = target => {
+          const a = place(target).actor;
+          return previous ? Math.hypot(a.x + a.size / 2 - view.left - previous.x * view.width,
+            a.y + a.size / 2 - view.top - previous.y * view.height) : Infinity;
+        };
+        const minimum = Math.min(240, Math.min(view.width, view.height) * .28);
+        let bestDistance = -1;
+        // Try random positions first. Corners of the safe area provide a bounded
+        // fallback even when randomness repeats or the available space is tiny.
+        const candidates = Array.from({ length: 12 }, () => ({ x: random(), y: random() }));
+        candidates.push({ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: 1, y: 1 });
+        for (const candidate of candidates) {
+          const separation = distance(candidate);
+          if (separation > bestDistance) { destination = candidate; bestDistance = separation; }
+          if (separation >= minimum) break;
+        }
+      }
+      // Keep this destination through settling, scroll and viewport resizing.
+      const placed = place(destination);
+      lastPositions.set(doc, { x: (placed.actor.x + placed.actor.size / 2 - view.left) / view.width,
+        y: (placed.actor.y + placed.actor.size / 2 - view.top) / view.height });
+      actor.style.width = actor.style.height = placed.actor.size + 'px';
+      actor.style.left = placed.actor.x + 'px'; actor.style.top = placed.actor.y + 'px';
+      tip.style.left = placed.bubble.x + 'px'; tip.style.top = placed.bubble.y + 'px';
+      tip.dataset.characterSide = placed.side;
+      return { view, ...placed };
+    };
+    const settle = () => {
+      if (stopped || settled) return;
+      settled = true; win.clearTimeout(fallback); motions.forEach(motion => motion.cancel());
+      position(); tip.style.visibility = ''; onSettled?.();
+    };
+    const { view, actor: end } = position();
+    const margin = Math.min(12, view.width / 12, view.height / 12);
+    actor.dataset.motion = ['hop', 'roll', 'glide'][mode];
+    const minX = view.left + margin, maxX = Math.max(minX, view.left + view.width - margin - end.size);
+    const minY = view.top + margin, maxY = Math.max(minY, view.top + view.height - margin - end.size);
+    const clampX = x => Math.max(minX, Math.min(maxX, x));
+    const clampY = y => Math.max(minY, Math.min(maxY, y));
+    let startX = edge < 2 ? (edge === 0 ? minX : maxX) : between(minX, maxX);
+    let startY = edge >= 2 ? (edge === 2 ? minY : maxY) : between(minY, maxY);
+    // Avoid an almost invisible entrance when the note is next to that edge.
+    if (Math.hypot(startX - end.x, startY - end.y) < Math.min(120, Math.hypot(maxX - minX, maxY - minY) / 3)) {
+      if (edge < 2) startX = edge === 0 ? maxX : minX;
+      else startY = edge === 2 ? maxY : minY;
+    }
+    const bendX = clampX((startX + end.x) / 2 + between(-.4, .4) * (maxX - minX));
+    const bendY = clampY((startY + end.y) / 2 + between(-.4, .4) * (maxY - minY));
+    const hops = 2 + Math.floor(random() * 2), height = between(35, 110);
+    const duration = Math.round(between(850, 1250)), direction = random() < .5 ? -1 : 1;
+    const rotation = direction * between(240, 440), tilt = direction * between(8, 20);
+    const frames = Array.from({ length: 25 }, (_, index) => {
+      const t = index / 24, u = 1 - t;
+      const x = u * u * startX + 2 * u * t * bendX + t * t * end.x;
+      const hop = mode === 0 ? Math.abs(Math.sin(Math.PI * hops * t)) * height * (1 - t) : 0;
+      const y = u * u * startY + 2 * u * t * bendY + t * t * end.y - hop;
+      // Bounded samples + non-overshooting interpolation keep the whole path inside.
+      return { offset: t, transform: `translate(${clampX(x) - end.x}px,${clampY(y) - end.y}px)` };
+    });
+    const reduced = win.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    if (!reduced && actor.animate) {
+      try {
+        const move = actor.animate(frames, { duration, easing: 'ease-in-out', fill: 'none' }); motions.push(move);
+        const pose = mode === 1
+          ? [{ transform: `scale(.7) rotate(${rotation}deg)` }, { transform: `scale(.7) rotate(${direction * 30}deg)`, offset: .8 }, { transform: 'scale(1) rotate(0)' }]
+          : [{ transform: `scale(.85,.95) rotate(${tilt}deg)` }, { transform: `scale(.95,.78) rotate(${-tilt / 2}deg)`, offset: .78 }, { transform: 'scale(1) rotate(0)' }];
+        const poseAnimation = avatar.animate(pose, { duration, easing: 'ease-in-out', fill: 'none' });
+        poseAnimation.finished?.catch(() => {}); motions.push(poseAnimation);
+        move.finished?.then(settle, () => {});
+        fallback = win.setTimeout(settle, duration + 50);
+      } catch { settle(); }
+    } else settle();
+    return {
+      reposition() { if (stopped) return; position(); settle(); },
+      cancel() { stopped = true; win.clearTimeout(fallback); motions.forEach(motion => motion.cancel()); actor.remove(); tip.style.cssText = ''; delete tip.dataset.characterSide; },
+    };
+  };
+  return { characters, normalizeCharacter, characterImage, readImage, layout, present: allowCharacters ? present : undefined, get effects() { return [...registry.values()]; }, register, normalize, play, cancel };
+},function createColorPalette(host, { colors = DEFAULT_COLORS, label, value = '', disabled = false, compact = false, custom = true, customLabel = 'Custom color', onChange } = {}) {
+  const doc = host.ownerDocument;
+  const root = doc.createElement('div'); root.className = 'pageon-color-palette'; root.setAttribute('role', 'group');
+  const style = doc.createElement('style');
+  style.textContent = '.pageon-color-palette{display:block;max-width:100%;color-scheme:light}.pageon-color-palette .pageon-color-swatch{box-sizing:border-box;display:grid;place-items:center;width:32px;height:32px;margin:0;padding:4px;border:1px solid #dfe5e7;border-radius:50%;background:#fff;color:#182022;cursor:pointer;font:12px/1 system-ui}.pageon-color-palette .pageon-color-swatch:hover,.pageon-color-palette .pageon-color-swatch[aria-pressed=true]{border-color:#087f73;background:#edf7f5}.pageon-color-palette .pageon-color-swatch:focus-visible{outline:2px solid #159d89;outline-offset:2px}.pageon-color-palette .pageon-color-swatch:disabled{opacity:.5;cursor:default}.pageon-color-palette .pageon-color-swatch span{display:grid;place-items:center;width:22px;height:22px;border-radius:50%;color:#182022}';
+  style.textContent += '.pageon-color-palette [hidden]{display:none!important}.pageon-color-palette.is-compact{display:block}.pageon-color-palette .palette-options{display:grid;grid-template-columns:repeat(5,32px);gap:8px}.pageon-color-palette.is-compact .palette-options{margin-top:8px}.pageon-color-palette .palette-trigger{display:flex;align-items:center;gap:8px;width:100%;min-height:30px;padding:4px 8px;border:1px solid #dfe5e7;border-radius:6px;background:#fff;color:#182022;cursor:pointer;font:12px/1.4 system-ui}.pageon-color-palette .palette-chip{width:18px;height:18px;border:1px solid #dfe5e7;border-radius:50%;flex-shrink:0}.pageon-color-palette .palette-caption{flex:1;text-align:left}.pageon-color-palette .palette-custom{grid-column:1/-1;display:flex;gap:8px;align-items:center;min-width:0}.pageon-color-palette .palette-picker{position:relative;display:block;width:32px;height:30px;border:1px solid #dfe5e7;border-radius:6px;overflow:hidden;flex-shrink:0}.pageon-color-palette .palette-picker input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}.pageon-color-palette .palette-hex{box-sizing:border-box;min-width:0;width:100%;height:30px;padding:4px 6px;border:1px solid #dfe5e7;border-radius:6px;background:#fff;color:#182022;font:12px ui-monospace,monospace}.pageon-color-palette :is(.palette-trigger,.palette-hex):focus-visible,.pageon-color-palette .palette-picker:focus-within{outline:2px solid #159d89;outline-offset:2px}';
+  style.textContent += '.pageon-color-palette .palette-chevron{width:16px;height:16px;flex-shrink:0;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;color:#647178;transition:transform .15s}.pageon-color-palette .palette-trigger[aria-expanded=true] .palette-chevron{transform:rotate(180deg)}';
+  root.append(style);
+  const trigger = doc.createElement('button'); trigger.type = 'button'; trigger.className = 'palette-trigger'; trigger.hidden = !compact;
+  const chip = doc.createElement('span'); chip.className = 'palette-chip'; chip.setAttribute('aria-hidden', 'true');
+  const caption = doc.createElement('span'); caption.className = 'palette-caption';
+  const arrow = doc.createElementNS('http://www.w3.org/2000/svg', 'svg'); arrow.setAttribute('viewBox', '0 0 24 24'); arrow.setAttribute('aria-hidden', 'true'); arrow.setAttribute('class', 'palette-chevron');
+  arrow.innerHTML = '<path d="m6 9 6 6 6-6"/>';
+  trigger.append(chip, caption, arrow);
+  const options = doc.createElement('div'); options.className = 'palette-options'; options.hidden = compact;
+  if (compact) root.classList.add('is-compact');
+  if (compact) root.append(trigger);
+  root.append(options);
+  let current = { label, value, disabled, customLabel };
+  const collapse = () => {
+    if (!compact) return;
+    const active = root.getRootNode().activeElement;
+    if (active && options.contains(active)) trigger.focus({ preventScroll: true });
+    options.hidden = true; trigger.setAttribute('aria-expanded', 'false');
+  };
+  root.addEventListener('keydown', event => {
+    if (compact && !options.hidden && event.key === 'Escape') {
+      event.preventDefault(); event.stopPropagation(); collapse(); trigger.focus({ preventScroll: true });
+    }
+  });
+  trigger.addEventListener('click', () => {
+    if (current.disabled) return;
+    const open = options.hidden;
+    // Only one palette is expanded in an annotation panel.
+    root.getRootNode().querySelectorAll('.pageon-color-palette.is-compact .palette-trigger[aria-expanded=true]').forEach(button => { if (button !== trigger) button.click(); });
+    options.hidden = !open; trigger.setAttribute('aria-expanded', String(open));
+  });
+  trigger.setAttribute('aria-expanded', 'false');
+  const emit = color => { if (!current.disabled) { onChange?.(color); collapse(); } };
+  const buttons = colors.map(color => {
+    const button = doc.createElement('button'); button.type = 'button'; button.className = 'pageon-color-swatch';
+    const swatch = doc.createElement('span'); swatch.style.backgroundColor = color; swatch.setAttribute('aria-hidden', 'true'); button.append(swatch);
+    button.addEventListener('click', () => { emit(color); });
+    options.append(button); return button;
+  });
+  const customRow = doc.createElement('div'); customRow.className = 'palette-custom'; customRow.hidden = !custom;
+  const pickerLabel = doc.createElement('label'); pickerLabel.className = 'palette-picker';
+  const picker = doc.createElement('input'); picker.type = 'color'; pickerLabel.append(picker);
+  const hex = doc.createElement('input'); hex.type = 'text'; hex.className = 'palette-hex'; hex.placeholder = '#RRGGBB'; hex.maxLength = 7; hex.spellcheck = false;
+  customRow.append(pickerLabel, hex); options.append(customRow);
+  const commit = () => {
+    const raw = hex.value.trim(); const value = raw.startsWith('#') ? raw : '#' + raw;
+    if (/^#[0-9a-f]{6}$/i.test(value)) { emit(value.toLowerCase()); return true; }
+    return false;
+  };
+  picker.addEventListener('input', () => { if (!current.disabled) onChange?.(picker.value); });
+  picker.addEventListener('change', () => { emit(picker.value); });
+  hex.addEventListener('change', () => { if (!commit()) update(current); });
+  hex.addEventListener('keydown', event => {
+    if (event.key === 'Enter') { event.preventDefault(); if (!commit()) update(current); }
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); update(current); collapse(); trigger.focus(); }
+  });
+  const update = next => {
+    current = { ...current, ...next };
+    root.setAttribute('aria-label', current.label);
+    trigger.setAttribute('aria-label', current.label); trigger.disabled = picker.disabled = hex.disabled = !!current.disabled;
+    if (current.disabled) collapse();
+    const color = /^#[0-9a-f]{6}$/i.test(current.value || '') ? current.value : '';
+    chip.style.backgroundColor = color || 'transparent'; caption.textContent = current.label;
+    picker.value = color || '#000000'; pickerLabel.style.backgroundColor = color || '#ffffff';
+    picker.setAttribute('aria-label', current.label + ' · ' + current.customLabel);
+    pickerLabel.title = current.customLabel; hex.setAttribute('aria-label', current.label + ' HEX'); hex.value = color;
+
+    buttons.forEach((button, index) => {
+      const active = String(current.value).toLowerCase() === colors[index];
+      button.disabled = !!current.disabled;
+      button.setAttribute('aria-label', current.label + ' ' + colors[index]);
+      button.setAttribute('aria-pressed', String(active));
+      button.firstChild.textContent = active ? '✓' : '';
+    });
+  };
+  host.append(root); update(current);
+  return { root, update, collapse, destroy() { root.remove(); } };
 });</script></body>
 </html>

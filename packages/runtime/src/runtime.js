@@ -1,3 +1,5 @@
+import { createColorPalette, DEFAULT_COLORS } from "@pageon/ui/color-palette";
+import { createNoteAnimations } from "@pageon/note-animations";
 import { createNoteTarget } from "./note-target.js";
 import { createFloatingPanel } from "@pageon/ui/floating-panel";
 import { createOfflineNoteForm } from "@pageon/ui/offline-note-form";
@@ -39,10 +41,10 @@ function labels(lang) {
         };
 }
 
-function options({ fileName = "document.html", lang = "en", temporaryEdits = false, ui = "floating", shortcuts = true, imageExport = true } = {}) {
+function options({ fileName = "document.html", lang = "en", temporaryEdits = false, ui = "floating", shortcuts = true, imageExport = true, noteCharacters = false } = {}) {
   if (!["floating", "sidebar", false].includes(ui)) throw new TypeError("invalid-runtime-ui");
-  return { fileName: String(fileName), homeUrl: BRAND_URL, temporaryEdits: Boolean(temporaryEdits),
-    ui, editStyle: RUNTIME_EDIT_STYLE, floatingStyle: FLOATING_TOOLBAR_STYLE + TOOLBAR_DOCK_STYLE, shortcuts: Boolean(shortcuts), imageExport: Boolean(imageExport), text: labels(lang), version: RUNTIME_VERSION };
+  return { paletteColors: DEFAULT_COLORS, fileName: String(fileName), homeUrl: BRAND_URL, temporaryEdits: Boolean(temporaryEdits),
+    ui, editStyle: RUNTIME_EDIT_STYLE, floatingStyle: FLOATING_TOOLBAR_STYLE + TOOLBAR_DOCK_STYLE, shortcuts: Boolean(shortcuts), imageExport: Boolean(imageExport), noteCharacters: Boolean(noteCharacters), text: labels(lang), version: RUNTIME_VERSION };
 }
 
 /** Self-contained browser script. Brand URL and attribution are not configurable. */
@@ -52,12 +54,12 @@ export function createRuntimeCode(input = {}) {
   // The capability is fixed when the HTML is assembled. Disabled exports carry
   // neither the renderer nor its image/PDF controls; enabled copies work offline.
   const visualExportFactory = settings.imageExport ? VISUAL_EXPORT_FACTORY_SOURCE : "null";
-  return "/*!\n" + MIT_LICENSE + "*/\n(" + installRuntime.toString() + ")(" + config + "," + createDeckEditSession.toString() + ",document,window,''," + createFloatingToolbar.toString() + "," + visualExportFactory + "," + createFileSaver.toString() + "," + createExportMenu.toString() + "," + installNotes.toString() + "," + createOfflineNoteForm.toString() + "," + createFloatingPanel.toString() + "," + createNoteTarget.toString() + ");";
+  return "/*!\n" + MIT_LICENSE + "*/\n(" + installRuntime.toString() + ")(" + config + "," + createDeckEditSession.toString() + ",document,window,''," + createFloatingToolbar.toString() + "," + visualExportFactory + "," + createFileSaver.toString() + "," + createExportMenu.toString() + "," + installNotes.toString() + "," + createOfflineNoteForm.toString() + "," + createFloatingPanel.toString() + "," + createNoteTarget.toString() + "," + createNoteAnimations.toString() + "," + createColorPalette.toString() + ");";
 }
 
 /** Use the same controller in a trusted document with custom controls. */
 export function createRuntime({ document = globalThis.document, onSave, ...input } = {}) {
   if (!document?.defaultView) throw new TypeError("runtime-document-required");
   const settings = options(input);
-  return installRuntime({ ...settings, onSave }, createDeckEditSession, document, document.defaultView, createRuntimeCode(input), createFloatingToolbar, settings.imageExport ? createVisualExporter : null, createFileSaver, createExportMenu, installNotes, createOfflineNoteForm, createFloatingPanel, createNoteTarget);
+  return installRuntime({ ...settings, onSave }, createDeckEditSession, document, document.defaultView, createRuntimeCode(input), createFloatingToolbar, settings.imageExport ? createVisualExporter : null, createFileSaver, createExportMenu, installNotes, createOfflineNoteForm, createFloatingPanel, createNoteTarget, createNoteAnimations, createColorPalette);
 }

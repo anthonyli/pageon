@@ -4,7 +4,7 @@ import { JSDOM } from 'jsdom';
 import { createNoteTarget, recordNoteTarget } from '../../packages/runtime/src/note-target.js';
 import { installNotes } from '../../packages/runtime/src/notes.js';
 
-test('text selection across inline styles records only yellow/black selected text, one grouped note, and removes without changing original markup', () => {
+test('text selection across inline styles records highlighted selected text with inherited colors, one grouped note, and removes without changing original markup', () => {
   const dom = new JSDOM('<html><body><p data-artifact-edit="1" style="color:red">Before <em style="color:blue">bold words</em> after</p><p data-artifact-edit="2">Next</p></body></html>', { pretendToBeVisual: true });
   const doc = dom.window.document, p = doc.querySelector('p'), original = p.innerHTML, entries = new Map();
   const range = doc.createRange(); range.setStart(p.firstChild, 3); range.setEnd(p.lastChild, 3);
@@ -19,8 +19,8 @@ test('text selection across inline styles records only yellow/black selected tex
     assert.equal(new Set(marks.map(mark => mark.dataset.pageonNoteRange)).size, 1);
     assert.equal(marks.map(mark => mark.textContent).join(''), 'ore bold words af');
     for (const mark of marks) {
-      assert.equal(mark.style.color, 'rgb(0, 0, 0)');
-      assert.equal(mark.style.backgroundColor, 'rgb(255, 235, 59)');
+      assert.equal(mark.style.color, 'inherit');
+      assert.equal(mark.style.backgroundColor, 'rgb(255, 204, 57)');
       assert.equal(mark.style.getPropertyPriority('color'), 'important');
     }
     assert.equal(p.style.color, 'red'); assert.equal(p.querySelector('em').style.color, 'blue');
@@ -31,8 +31,21 @@ test('text selection across inline styles records only yellow/black selected tex
     assert.equal(doc.querySelector('pageon-notes').shadowRoot.querySelectorAll('button').length, 1);
     const reopened = createNoteTarget(marks[1], { capture: false });
     assert.equal(reopened.read(), 'Explain this');
-    recordNoteTarget(entries, reopened, 'Updated');
+    recordNoteTarget(entries, reopened, 'Updated', undefined, undefined, '#02bb9f');
+    assert.ok(marks.every(mark => mark.dataset.pageonNoteColor === '#02bb9f' && mark.style.backgroundColor === 'rgb(2, 187, 159)'));
+    assert.equal(createNoteTarget(marks[2], { capture: false }).color, '#02bb9f');
+    assert.equal(entries.get('1').html, p.innerHTML);
+    recordNoteTarget(entries, reopened, 'Updated', undefined, undefined, 'red;position:fixed');
+    assert.equal(reopened.color, '#ffcc39', 'invalid CSS is never persisted');
     assert.ok(marks.every(mark => mark.dataset.pageonNote === 'Updated'));
+    recordNoteTarget(entries, reopened, 'Updated', undefined, undefined, '#02bb9f', '#fa70ab');
+    assert.ok(marks.every(mark => mark.style.color === 'rgb(250, 112, 171)' && mark.dataset.pageonNoteTextColor === '#fa70ab'));
+    assert.equal(createNoteTarget(marks[2], { capture: false }).textColor, '#fa70ab');
+    recordNoteTarget(entries, reopened, 'Updated', undefined, undefined, '#02bb9f', '');
+    assert.ok(marks.every(mark => mark.style.color === 'inherit' && !mark.hasAttribute('data-pageon-note-text-color')));
+    assert.equal(marks[1].parentElement.style.color, 'blue', 'reset retains the individual original color');
+    recordNoteTarget(entries, reopened, 'Updated', undefined, undefined, '#02bb9f', 'red;position:fixed');
+    assert.equal(reopened.textColor, '', 'invalid foreground CSS falls back to the original');
     recordNoteTarget(entries, reopened, '');
     assert.equal(p.innerHTML, original);
     assert.equal(entries.get('1').html, original);
@@ -72,7 +85,7 @@ test('text annotation stays inline even when the page styles heading spans as bl
     assert.equal(dom.window.getComputedStyle(mark).padding, '0px');
     assert.equal(mark.style.fontSize, 'inherit');
     assert.equal(mark.style.getPropertyPriority('display'), 'important');
-    assert.equal(mark.style.backgroundColor, 'rgb(255, 235, 59)');
+    assert.equal(mark.style.backgroundColor, 'rgb(255, 204, 57)');
     assert.equal(title.getAttribute('style'), null, 'annotation never changes the module styles');
     const reopened = new dom.window.DOMParser().parseFromString(title.outerHTML, 'text/html').querySelector('span');
     assert.equal(reopened.style.display, 'inline');

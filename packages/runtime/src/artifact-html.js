@@ -27,7 +27,7 @@ export function createExportHtml(template, entries = []) {
     if (target && typeof html === "string") target.innerHTML = html;
   });
   applyNoteEntries(doc, entries, findEditableNode);
-  attachNotesRuntime(doc);
+  attachNotesRuntime(doc, { noteCharacters: false });
   doc.querySelectorAll("[data-artifact-edit],[data-artifact-selected]").forEach((node) => {
     node.removeAttribute("data-artifact-edit");
     node.removeAttribute("data-artifact-selected");

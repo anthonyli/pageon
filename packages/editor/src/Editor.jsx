@@ -1,5 +1,6 @@
 "use client";
 
+import { recordNoteMarkerMode } from "@pageon/runtime/notes";
 import { recordNoteTarget } from "@pageon/runtime/note-target";
 
 import { defaultTranslate, defaultMessage } from "./messages.js";
@@ -411,9 +412,15 @@ export default function Editor({
 
 
         <div role="toolbar" aria-label={t("批注")} className="flex items-center border-b bg-card px-4 py-1">
-            {mode === "edit" && <NotesPanel node={selectedNodeRef.current} revision={noteRevision} t={t} disabled={!!exportingType}
-              onSave={(value, target) => {
-                if (!recordNoteTarget(diffRef.current, target, value)) return;
+            {mode === "edit" && <NotesPanel allowCharacters={false} node={selectedNodeRef.current} revision={noteRevision} t={t} disabled={!!exportingType}
+              onMarkerModeChange={(mode, doc) => {
+                if (!recordNoteMarkerMode(diffRef.current, doc, mode)) return;
+                setChangeCount(diffRef.current.size);
+                setNoteRevision(revision => revision + 1);
+                publishDraft();
+                notesRef.current?.refresh();
+              }} onSave={(value, target, animation, character, color, textColor) => {
+                if (!recordNoteTarget(diffRef.current, target, value, animation, character, color, textColor)) return;
                 setChangeCount(diffRef.current.size);
                 setNoteRevision(revision => revision + 1);
                 publishDraft();

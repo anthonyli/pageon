@@ -1,5 +1,5 @@
 // Kept self-contained so the exact same function runs in exported HTML.
-export function installRuntime(config, createDeckEditSession, document, window, fallbackSource = '', createFloatingToolbar, createVisualExporter, createFileSaver, createExportMenu, installNotes, createOfflineNoteForm, createFloatingPanel, createNoteTarget) {
+export function installRuntime(config, createDeckEditSession, document, window, fallbackSource = '', createFloatingToolbar, createVisualExporter, createFileSaver, createExportMenu, installNotes, createOfflineNoteForm, createFloatingPanel, createNoteTarget, createNoteAnimations, createColorPalette) {
 const Node = window.Node || globalThis.Node;
 const MutationObserver = window.MutationObserver || globalThis.MutationObserver;
 const getComputedStyle = window.getComputedStyle?.bind(window) || globalThis.getComputedStyle;
@@ -193,10 +193,14 @@ const setEditing=value=>{
 // Reuse the early head script when present so Space still precedes deck handlers.
 // Limited DOM implementations can use the editor without the visual overlay.
 const ownsNotes=!window.PageOnNotes&&typeof window.requestAnimationFrame==='function'&&typeof window.URLSearchParams==='function';
-const notes=window.PageOnNotes||(ownsNotes?installNotes(document,window):null);
+const notes=window.PageOnNotes||(ownsNotes?installNotes(document,window,{noteCharacters:config.noteCharacters},createNoteAnimations):null);
 if(ownsNotes)cleanups.push(()=>notes.destroy());
-const notesForm=createOfflineNoteForm({document,lang:TEXT.edit==='编辑'?'zh':'en',createFloatingPanel,createNoteTarget,anchor:notesButton,onClose(){notesButton.setAttribute('aria-expanded','false');},onChange(node,value,target){
-  if(!target.write(value))return;
+const notesForm=createOfflineNoteForm({document,paletteFactory:createColorPalette,paletteColors:config.paletteColors,animations:createNoteAnimations({allowCharacters:config.noteCharacters}),lang:TEXT.edit==='编辑'?'zh':'en',createFloatingPanel,createNoteTarget,anchor:notesButton,onClose(){notesButton.setAttribute('aria-expanded','false');},onMarkerModeChange(mode){
+  if(!['auto','always','edit'].includes(mode))return;
+  document.documentElement.setAttribute('data-pageon-note-markers',mode);
+  notes?.refresh();emit('change',getSelection());
+},onChange(node,value,target,animation,character,color,textColor){
+  if(!target.write(value,animation,character,color,textColor))return;
   notes?.refresh();
   emit('change',getSelection());
 }});
@@ -241,7 +245,7 @@ const serialize = () => {
     if([...copy.querySelectorAll('[data-pageon-note]')].some(node=>(node.getAttribute('data-pageon-note')||'').trim())){
       const script=document.createElement('script');
       script.id='pageon-notes-script';
-      script.textContent='('+installNotes.toString()+')(document,window);';
+      script.textContent='('+installNotes.toString()+')(document,window,{noteCharacters:'+!!config.noteCharacters+'},'+createNoteAnimations.toString()+');';
       (copy.querySelector('head')||copy).prepend(script);
     }
     if(!copy.querySelector('#pageon-local-runtime-script') && runtimeSource){
@@ -280,7 +284,7 @@ const save = (copy = false) => {
   } catch(error) { finish();reportStatus(fileSaver.labels.failed);return Promise.reject(error); }
 };
 notes?.setInputGuard?.(event=>{
-  if(event.target!==host||shadow.activeElement!==notesForm.input)return false;
+  if(event.target!==host||!notesForm.panel.contains(shadow.activeElement))return false;
   if(event.type==='keydown'&&event.key==='Escape'){event.preventDefault();notesForm.close();}
   if(event.type==='keydown'&&config.shortcuts&&!event.isComposing&&(event.metaKey||event.ctrlKey)&&event.key?.toLowerCase()==='s'){
     event.preventDefault();save().catch(error=>emit('error',error));

@@ -162,3 +162,67 @@ test("minified production code still emits a self-contained notes script", async
     assert.equal(dom.window.document.querySelector('pageon-notes').shadowRoot.querySelector('[role="status"]').textContent, 'First');
   } finally { dom.window.PageOnNotes?.destroy(); dom.window.close(); parser.window.close(); }
 });
+
+test('auto hides presentation numbers outside edit mode while preserving highlights and Space cues', () => {
+  const html = source.replace('<body>', '<body><main class="slides">').replace('</body>', '</main></body>').replace('Title', '<span style="background-color:#fa70ab;color:black">Title</span>');
+  const f = fixture(html);
+  try {
+    const markers = () => [...f.doc.querySelector('pageon-notes').shadowRoot.querySelectorAll('button')];
+    const highlight = f.doc.querySelector('h1 span').getAttribute('style');
+    assert.ok(markers().every(marker => marker.hidden));
+    f.press(); assert.equal(f.tip().textContent, 'First');
+    f.doc.documentElement.dataset.artifactLocalEdit = 'true'; f.api.refresh();
+    assert.equal(markers()[0].hidden, false);
+    f.doc.documentElement.dataset.artifactLocalEdit = 'false'; f.api.refresh();
+    assert.ok(markers().every(marker => marker.hidden));
+    f.doc.documentElement.dataset.artifactMode = 'edit'; f.api.refresh();
+    assert.equal(markers()[0].hidden, false);
+    f.doc.documentElement.dataset.artifactMode = 'preview'; f.api.refresh();
+    assert.ok(markers().every(marker => marker.hidden));
+    assert.equal(f.doc.querySelector('h1 span').getAttribute('style'), highlight);
+    assert.equal(f.doc.querySelector('h1').dataset.pageonNote, 'First');
+  } finally { f.close(); }
+});
+
+test('auto recognizes page-sized custom slides but leaves ordinary cards and carousels alone', () => {
+  for (const carousel of [false, true]) {
+    const f = fixture(source.replace('<body>', carousel ? '<body><div class="carousel">' : '<body><div>').replace('</body>', '</div></body>'));
+    try {
+      const marker = f.doc.querySelector('pageon-notes').shadowRoot.querySelector('button');
+      assert.equal(marker.hidden, false, 'a small .slide card is not enough to classify a document as slides');
+      f.win.HTMLElement.prototype.getBoundingClientRect = () => ({ top: 0, left: 0, right: 1024, bottom: 768, width: 1024, height: 768 });
+      f.api.refresh(); assert.equal(marker.hidden, !carousel);
+    } finally { f.close(); }
+  }
+});
+
+test('document display preference overrides automatic detection without touching note backgrounds', () => {
+  const f = fixture('<html><body><p data-pageon-note="Read" style="background-color:#ffcc39">Document</p></body></html>');
+  try {
+    const marker = f.doc.querySelector('pageon-notes').shadowRoot.querySelector('button');
+    assert.equal(marker.hidden, false);
+    f.doc.documentElement.setAttribute('data-pageon-note-markers', 'edit'); f.api.refresh();
+    assert.equal(marker.hidden, true);
+    f.doc.documentElement.setAttribute('data-pageon-note-markers', 'always'); f.api.refresh();
+    assert.equal(marker.hidden, false);
+    assert.equal(f.doc.querySelector('p').style.backgroundColor, 'rgb(255, 204, 57)');
+  } finally { f.close(); }
+});
+
+
+test('legacy black annotation text inherits original colors while explicit text colors and highlights survive refresh', () => {
+  const f = fixture('<html><body><p style="color:white"><span data-pageon-note-range="old" data-pageon-note="Old" style="background-color:#ffcc39!important;color:#000000!important;-webkit-text-fill-color:#000000!important">White originally</span><em style="color:red"><span data-pageon-note-range="old" data-pageon-note="Old" style="background-color:#ffcc39!important;color:#000000!important">Red originally</span></em><span data-pageon-note-range="new" data-pageon-note="New" data-pageon-note-text-color="#a25aff" style="background-color:#02bb9f!important;color:#a25aff!important">Custom</span></p></body></html>');
+  try {
+    const [first, second, custom] = f.doc.querySelectorAll('[data-pageon-note-range]');
+    assert.equal(first.style.color, 'inherit');
+    assert.equal(second.style.color, 'inherit');
+    assert.equal(first.parentElement.style.color, 'white');
+    assert.equal(second.parentElement.style.color, 'red');
+    assert.equal(first.style.backgroundColor, 'rgb(255, 204, 57)');
+    assert.equal(custom.style.color, 'rgb(162, 90, 255)');
+    assert.equal(custom.style.backgroundColor, 'rgb(2, 187, 159)');
+    const snapshot = f.doc.body.innerHTML;
+    f.api.refresh();
+    assert.equal(f.doc.body.innerHTML, snapshot, 'refresh does not keep rewriting styles');
+  } finally { f.close(); }
+});
