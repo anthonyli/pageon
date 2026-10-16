@@ -42,32 +42,76 @@ export function createNoteAnimations({ allowCharacters = true } = {}) {
     animation.finished?.then(release, release);
     return animation;
   };
-  const characters = [
-    { id: 'dot', label: { zh: '圆圈', en: 'Circle' } },
-    { id: 'blob', label: { zh: '软糖', en: 'Jelly' } },
-    { id: 'spark', label: { zh: '小星', en: 'Spark' } },
-    { id: 'frog', label: { zh: '小蛙', en: 'Frog' } },
-    { id: 'custom', label: { zh: '自己的图片', en: 'My image' } },
+  const bubbleShapes = [
+    { id: 'rounded', radius: '18px', label: { zh: '圆角矩形', en: 'Rounded rectangle' } },
+    { id: 'square', radius: '0px', label: { zh: '矩形', en: 'Rectangle' } },
+    { id: 'soft', radius: '32px', label: { zh: '大圆角', en: 'Soft rounded' } },
+    { id: 'speech', radius: '18px 18px 18px 4px', label: { zh: '对话气泡', en: 'Speech bubble' } },
   ];
+  const normalizeBubble = raw => {
+    let value = raw;
+    if (typeof raw === 'string') { try { value = raw.length <= 500 ? JSON.parse(raw) : null; } catch { value = null; } }
+    const color = (value, fallback) => /^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/i.test(value || '') ? value.toLowerCase() : fallback;
+    return { background: color(value?.background, '#ffffff'), color: color(value?.color, '#182022'),
+      shape: bubbleShapes.some(shape => shape.id === value?.shape) ? value.shape : 'rounded' };
+  };
+  const applyBubble = (element, raw) => {
+    const bubble = normalizeBubble(raw);
+    element.style.backgroundColor = bubble.background;
+    element.style.color = bubble.color;
+    element.style.borderRadius = bubbleShapes.find(shape => shape.id === bubble.shape).radius;
+  };
+  const characters = [
+    { id: 'dot', defaultColor: '#4678ff', label: { zh: '圆圈', en: 'Circle' } },
+    { id: 'blob', defaultColor: '#4678ff', label: { zh: '软糖', en: 'Jelly' } },
+    { id: 'spark', defaultColor: '#ffcc39', label: { zh: '小星', en: 'Spark' } },
+    { id: 'frog', defaultColor: '#b6d80d', label: { zh: '小蛙', en: 'Frog' } },
+    { id: 'bunny', defaultColor: '#a25aff', label: { zh: '兔耳', en: 'Bunny' } },
+    { id: 'heart', defaultColor: '#dd6adc', label: { zh: '酷酷爱心', en: 'Cool heart' } },
+    { id: 'monocle', defaultColor: '#ff8066', label: { zh: '单片眼镜', en: 'Monocle' } },
+    { id: 'diamond', defaultColor: '#ffcc39', label: { zh: '酷酷菱形', en: 'Cool diamond' } },
+    { id: 'glasses', defaultColor: '#02b1ff', label: { zh: '眼镜小蓝', en: 'Blue glasses' } },
+    { id: 'headphones', defaultColor: '#fa70ab', label: { zh: '耳机兔', en: 'Headphone bunny' } },
+    { id: 'thinking', defaultColor: '#02b1ff', label: { zh: '思考', en: 'Thinking' } },
+    { id: 'custom', defaultColor: '#4678ff', label: { zh: '自己的图片', en: 'My image' } },
+  ];
+  // Migrate colors supplied by the previous built-in defaults only. User-picked
+  // colors remain untouched, including values outside the shared presets.
+  const previousDefaults = { blob: '#3989ed', spark: '#f3cc45', frog: '#b9dd58', bunny: '#a83ee8',
+    heart: '#d54bd1', monocle: '#f47743', diamond: '#eee35b', glasses: '#48a9e4', headphones: '#e783a2', thinking: '#48a9e4' };
   const normalizeCharacter = raw => {
     let value = raw;
     if (typeof raw === 'string') { try { value = raw.length <= 190000 ? JSON.parse(raw) : null; } catch { value = null; } }
     const id = characters.some(item => item.id === value?.id) ? value.id : 'dot';
-    const color = /^#[0-9a-f]{6}$/i.test(value?.color || '') ? value.color : '#4678ff';
+    const color = /^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/i.test(value?.color || '') && value.color.toLowerCase() !== previousDefaults[id]
+      ? value.color : characters.find(item => item.id === id).defaultColor;
     const image = typeof value?.image === 'string' && value.image.length <= 180000 && /^data:image\/(png|webp|jpeg);base64,[a-z0-9+/]+=*$/i.test(value.image) ? value.image : '';
     return { id, color, image };
   };
+  // Defaults apply only on explicit role selection, never when reopening saved notes.
+  const selectCharacter = (raw, id) => normalizeCharacter({ ...normalizeCharacter(raw), id, color: undefined });
   const characterImage = raw => {
     const { id, color, image } = normalizeCharacter(raw);
     if (id === 'custom' && image) return image;
     const eyes = '<ellipse cx="38" cy="49" rx="3.4" ry="5" fill="#192536"/><ellipse cx="58" cy="49" rx="3.4" ry="5" fill="#192536"/><circle cx="39" cy="47" r="1" fill="white"/><circle cx="59" cy="47" r="1" fill="white"/>';
     const smile = '<path d="M42 61 Q48 66 54 61" fill="none" stroke="#192536" stroke-width="2.5" stroke-linecap="round"/>';
-    const body = id === 'blob'
+    const bow = '<path d="M33 77 L48 82 L63 77 V90 L48 84 L33 90Z" fill="#273344"/>';
+    const shades = '<path d="M23 40 H44 L47 45 H50 L53 40 H75 L71 55 Q62 63 54 54 L51 47 H45 L42 54 Q32 63 26 54Z" fill="#192536"/>';
+    const glasses = '<g fill="none" stroke="#273344" stroke-width="3"><circle cx="34" cy="48" r="12"/><circle cx="62" cy="48" r="12"/><path d="M46 47 H50"/></g>';
+    const blue = '<path d="M26 30 Q12 17 23 13 Q29 10 34 20 Q29 2 40 4 Q48 4 48 19 Q53 4 62 10 Q68 16 59 26 Q78 33 79 58 Q79 80 52 86 Q25 88 17 66 Q13 48 26 30Z" fill="url(#body)"/>';
+    const bunny = '<path d="M30 30 Q20 0 33 4 Q45 4 44 29 Q45 6 57 9 Q71 11 61 32 Q82 42 80 62 Q78 86 49 87 Q18 86 16 62 Q14 42 30 30Z" fill="url(#body)"/>';
+    const body = id === 'bunny' ? bunny + eyes + smile
+      : id === 'headphones' ? bunny + '<path d="M12 53 Q10 20 48 20 Q86 20 84 53 M13 51 V66 M83 51 V66" fill="none" stroke="#273344" stroke-width="6" stroke-linecap="round"/><path d="M29 50 Q35 58 41 50 M55 50 Q61 58 67 50" fill="none" stroke="#192536" stroke-width="3" stroke-linecap="round"/>' + smile
+      : id === 'heart' ? '<path d="M48 25 C18 -4 0 28 16 48 L41 83 Q48 91 55 83 L80 48 C96 28 78 -4 48 25Z" fill="url(#body)"/>' + shades + smile
+      : id === 'diamond' ? '<circle cx="48" cy="13" r="11" fill="url(#body)"/><path d="M43 28 Q48 23 53 28 L82 54 Q88 60 82 67 L54 91 Q48 96 42 91 L14 67 Q8 60 14 54Z" fill="url(#body)"/>' + shades + smile
+      : id === 'glasses' || id === 'thinking' ? blue + eyes + glasses + smile + (id === 'thinking' ? '<g><path d="M76 6 C60 6 60 23 69 29 V34 H81 V29 C92 21 90 6 76 6Z" fill="#ffd66b" stroke="#b88024" stroke-width="2"/><path d="M70 37 H80 M72 40 H78" stroke="#657280" stroke-width="3"/><path d="M75 0 V3 M92 9 L95 7 M59 9 L56 7" stroke="#e8b94c" stroke-width="2"/></g>' : '')
+      : id === 'monocle' ? '<path d="M30 15 Q40 4 51 14 Q65 7 72 23 Q88 24 84 42 Q95 54 82 65 Q86 81 68 82 Q54 96 43 84 Q25 91 21 76 Q5 74 13 56 Q4 43 18 33 Q15 19 30 15Z" fill="url(#body)"/>' + eyes + '<circle cx="59" cy="49" r="12" fill="none" stroke="#273344" stroke-width="4"/><path d="M69 58 Q73 74 84 71" fill="none" stroke="#273344" stroke-width="3"/>' + smile
+      : id === 'blob'
       ? '<path d="M25 22 Q28 10 40 17 Q50 7 60 19 Q76 15 77 32 Q91 40 80 55 Q87 71 70 75 Q62 91 48 80 Q32 90 25 75 Q8 71 17 55 Q5 39 20 32Z" fill="url(#body)"/><ellipse cx="45" cy="22" rx="25" ry="9" transform="rotate(-18 45 22)" fill="#202b38"/>' + eyes + smile
       : id === 'spark'
       ? '<path d="M36 18 Q48 5 60 18 L82 64 Q90 84 68 84 H28 Q6 84 14 64Z" fill="url(#body)"/>' + eyes + '<g fill="none" stroke="#273344" stroke-width="2.5"><ellipse cx="36" cy="48" rx="12" ry="15"/><ellipse cx="60" cy="48" rx="12" ry="15"/><path d="M48 46 h0"/></g><path d="M33 77 L48 82 L63 77 V90 L48 84 L33 90Z" fill="#273344"/>'
       : id === 'frog'
-      ? '<path d="M20 38 Q10 12 32 13 Q46 13 48 30 Q50 13 64 13 Q86 12 76 38 Q92 48 82 70 Q76 85 48 84 Q20 85 14 70 Q4 48 20 38Z" fill="url(#body)"/><g fill="white"><ellipse cx="31" cy="28" rx="10" ry="12"/><ellipse cx="65" cy="28" rx="10" ry="12"/></g><g fill="#192536"><ellipse cx="32" cy="29" rx="5" ry="7"/><ellipse cx="64" cy="29" rx="5" ry="7"/></g>' + smile
+      ? '<path d="M20 38 Q10 12 32 13 Q46 13 48 30 Q50 13 64 13 Q86 12 76 38 Q92 48 82 70 Q76 85 48 84 Q20 85 14 70 Q4 48 20 38Z" fill="url(#body)"/><g fill="white"><ellipse cx="31" cy="28" rx="10" ry="12"/><ellipse cx="65" cy="28" rx="10" ry="12"/></g><g fill="#192536"><ellipse cx="32" cy="29" rx="5" ry="7"/><ellipse cx="64" cy="29" rx="5" ry="7"/></g>' + smile + bow
       : '<path d="M84 48a36 36 0 1 0-72 0a36 36 0 1 0 72 0M64 48a16 16 0 1 0-32 0a16 16 0 1 0 32 0" fill="url(#body)" fill-rule="evenodd"/>';
     return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96"><defs><radialGradient id="body" cx="30%" cy="22%" r="85%"><stop stop-color="' + color + '"/><stop offset=".65" stop-color="' + color + '"/><stop offset="1" stop-color="' + color + '"/></radialGradient></defs>' + body + '</svg>');
   };
@@ -224,7 +268,7 @@ export function createNoteAnimations({ allowCharacters = true } = {}) {
       cancel() { stopped = true; win.clearTimeout(fallback); motions.forEach(motion => motion.cancel()); actor.remove(); tip.style.cssText = ''; delete tip.dataset.characterSide; },
     };
   };
-  return { characters, normalizeCharacter, characterImage, readImage, layout, present: allowCharacters ? present : undefined, get effects() { return [...registry.values()]; }, register, normalize, play, cancel };
+  return { bubbleShapes, normalizeBubble, applyBubble, characters, normalizeCharacter, selectCharacter, characterImage, readImage, layout, present: allowCharacters ? present : undefined, get effects() { return [...registry.values()]; }, register, normalize, play, cancel };
 }
 
 export const NOTE_ANIMATIONS = Object.freeze(createNoteAnimations().effects);

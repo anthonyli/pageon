@@ -118,3 +118,87 @@ test('exported early script carries the player offline, including notes=off and 
   }
   parser.window.close();
 });
+
+
+test('role defaults, manual colors and saved custom images survive factory serialization', () => {
+  const online = createNoteAnimations();
+  const offline = new Function('return (' + createNoteAnimations.toString() + ')()')();
+  const ids = ['dot', 'blob', 'spark', 'frog', 'bunny', 'heart', 'monocle', 'diamond', 'glasses', 'headphones', 'thinking', 'custom'];
+  assert.deepEqual(online.characters.map(item => item.id), ids);
+  const images = new Set();
+  for (const role of online.characters) {
+    for (const api of [online, offline]) {
+      const selected = api.selectCharacter({ id: 'frog', color: '#123456', image: 'data:image/png;base64,aGVsbG8=' }, role.id);
+      assert.equal(selected.color, role.defaultColor);
+      assert.equal(selected.image, 'data:image/png;base64,aGVsbG8=');
+      const saved = JSON.stringify({ ...selected, color: '#123456' });
+      assert.equal(api.normalizeCharacter(saved).color, '#123456');
+      assert.equal(api.normalizeCharacter({ id: role.id }).color, role.defaultColor);
+      assert.equal(api.characterImage(saved), online.characterImage(saved));
+    }
+    if (role.id !== 'custom') images.add(online.characterImage({ id: role.id }));
+  }
+  assert.equal(images.size, ids.length - 1);
+  assert.match(decodeURIComponent(online.characterImage({ id: 'dot' })), /fill-rule="evenodd"/);
+});
+
+test('bubble settings are bounded, safe, and independent from range highlight colors', () => {
+  const api = createNoteAnimations();
+  assert.deepEqual(api.normalizeBubble('{broken'), { background: '#ffffff', color: '#182022', shape: 'rounded' });
+  assert.deepEqual(api.normalizeBubble({ background: 'url(https://bad.test)', color: 'red;position:fixed', shape: '<script>' }), api.normalizeBubble(null));
+  const dom = new JSDOM('<p data-artifact-edit="1">Before <b>bold</b> after</p>');
+  try {
+    const doc = dom.window.document, p = doc.querySelector('p'), range = doc.createRange(), entries = new Map();
+    range.selectNodeContents(p); doc.getSelection().addRange(range);
+    const target = createNoteTarget(p);
+    const bubble = JSON.stringify({ background: '#02bb9f', color: '#a25aff', shape: 'speech' });
+    recordNoteTarget(entries, target, 'Cue', 'none', '', '#ffcc39', '#123456', bubble);
+    const spans = [...p.querySelectorAll('[data-pageon-note-range]')];
+    assert.ok(spans.length > 1);
+    for (const span of spans) {
+      assert.equal(span.dataset.pageonNoteBubble, bubble);
+      assert.equal(span.style.backgroundColor, 'rgb(255, 204, 57)');
+      assert.equal(span.style.color, 'rgb(18, 52, 86)');
+    }
+    assert.ok(entries.get('1').html.includes('data-pageon-note-bubble'));
+    assert.equal(createNoteTarget(spans[0], { capture: false }).bubble, bubble);
+    recordNoteTarget(entries, target, 'Updated'); assert.equal(target.bubble, bubble);
+    recordNoteTarget(entries, target, ''); assert.equal(p.querySelector('[data-pageon-note-bubble]'), null);
+  } finally { dom.window.close(); }
+});
+
+test('every built-in role default belongs to the shared palette, while saved custom colors remain valid', async () => {
+  const { DEFAULT_COLORS } = await import('../../packages/ui/src/color-palette.js');
+  const api = createNoteAnimations();
+  assert.equal(api.normalizeCharacter({ id: 'blob', color: '#3989ed' }).color, '#4678ff');
+  assert.equal(api.normalizeCharacter({ id: 'frog', color: '#b9dd58' }).color, '#b6d80d');
+  for (const role of api.characters) {
+    assert.ok(DEFAULT_COLORS.includes(role.defaultColor), role.id);
+    assert.equal(api.normalizeCharacter({ id: role.id }).color, role.defaultColor);
+    assert.equal(api.normalizeCharacter({ id: role.id, color: '#123456' }).color, '#123456');
+  }
+});
+
+test('range, avatar and bubble colors preserve alpha through serialization and safe normalization', () => {
+  const dom = new JSDOM('<p data-artifact-edit="1">Selected text</p>');
+  try {
+    const doc = dom.window.document, node = doc.querySelector('p'), range = doc.createRange();
+    range.selectNodeContents(node); doc.getSelection().addRange(range);
+    const target = createNoteTarget(node), entries = new Map();
+    const character = JSON.stringify({ id: 'frog', color: '#b6d80d80' });
+    const bubble = JSON.stringify({ background: '#ffffff00', color: '#18202280', shape: 'rounded' });
+    recordNoteTarget(entries, target, 'Cue', 'companion', character, '#ffcc3980', '#12345640', bubble);
+    const saved = new JSDOM(node.outerHTML);
+    try {
+      const mark = saved.window.document.querySelector('[data-pageon-note-range]');
+      const reopened = createNoteTarget(mark, { capture: false });
+      assert.equal(reopened.color, '#ffcc3980'); assert.equal(reopened.textColor, '#12345640');
+      assert.equal(reopened.bubble, bubble);
+      const api = createNoteAnimations();
+      assert.equal(api.normalizeCharacter(reopened.character).color, '#b6d80d80');
+      assert.match(decodeURIComponent(api.characterImage(reopened.character)), /#b6d80d80/);
+      assert.equal(api.normalizeBubble(reopened.bubble).background, '#ffffff00');
+      assert.equal(api.normalizeBubble({ background: '#1234567' }).background, '#ffffff');
+    } finally { saved.window.close(); }
+  } finally { dom.window.close(); }
+});

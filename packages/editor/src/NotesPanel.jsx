@@ -4,7 +4,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { createNoteAnimations, NOTE_ANIMATIONS } from "@pageon/note-animations";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@pageon/ui/select";
-import { MessageSquare, Smile, Settings2, RotateCcw, Play, Trash2 } from "lucide-react";
+import { MessageSquare, RotateCcw, Play, Trash2 } from "lucide-react";
 import { ColorPalette } from "@pageon/ui/color-palette-react";
 import { Disclosure } from "@pageon/ui/disclosure";
 import { Button } from "@pageon/ui/button";
@@ -13,7 +13,7 @@ import { Label } from "@pageon/ui/label";
 import { Textarea } from "@pageon/ui/textarea";
 import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from "@pageon/ui/tooltip";
 import { createFloatingPanel } from "@pageon/ui/floating-panel";
-import { NOTE_LIMIT, NOTE_MARKER_MODES, readNoteMarkerMode, readNote, readNoteAnimation, readNoteCharacter, readNoteColor } from "@pageon/runtime/notes";
+import { NOTE_LIMIT, NOTE_MARKER_MODES, readNoteMarkerMode, readNote, readNoteAnimation, readNoteCharacter, readNoteColor, readNoteBubble } from "@pageon/runtime/notes";
 import { createNoteTarget } from "@pageon/runtime/note-target";
 
 const animations = createNoteAnimations();
@@ -25,6 +25,8 @@ export function NotesPanel({ node, revision, onSave, onMarkerModeChange, t, noti
   const [value, setValue] = useState("");
   const [contextText, setContextText] = useState("");
   const [animation, setAnimation] = useState("none");
+  const [bubble, setBubble] = useState("");
+  const bubbleAppearance = animations.normalizeBubble(bubble);
   const [character, setCharacter] = useState("");
   const [markerMode, setMarkerMode] = useState("auto");
   const savedMarkerMode = readNoteMarkerMode(node?.ownerDocument);
@@ -43,6 +45,8 @@ export function NotesPanel({ node, revision, onSave, onMarkerModeChange, t, noti
   const written = useRef(null), composing = useRef(false);
   const saved = target.current?.read() ?? readNote(node);
   const savedAnimation = normalizeAnimation(target.current?.animation ?? readNoteAnimation(node));
+  const savedBubble = target.current?.bubble ?? readNoteBubble(node);
+  useEffect(() => { setBubble(savedBubble); }, [node, savedBubble, revision]);
   const savedCharacter = target.current?.character ?? readNoteCharacter(node);
   const savedTextColor = target.current?.textColor || "";
   useEffect(() => { setTextColor(savedTextColor); }, [node, savedTextColor, revision]);
@@ -73,7 +77,7 @@ export function NotesPanel({ node, revision, onSave, onMarkerModeChange, t, noti
   const loadTarget = next => {
     target.current = next; setContextText(next.text);
     written.current = next.read();
-    setTextColor(next.textColor); setColor(next.color); setValue(next.read()); setCharacter(next.character); setAnimation(normalizeAnimation(next.animation));
+    setBubble(next.bubble); setTextColor(next.textColor); setColor(next.color); setValue(next.read()); setCharacter(next.character); setAnimation(normalizeAnimation(next.animation));
     setMarkerMode(readNoteMarkerMode(node?.ownerDocument));
   };
   useEffect(() => {
@@ -97,11 +101,15 @@ export function NotesPanel({ node, revision, onSave, onMarkerModeChange, t, noti
     prepared.current = docked && !active ? next : null;
     if (docked) onActivate?.(); else setOpen(true);
   };
-  const save = (value, effect = animation, config = character, highlight = color, foreground = textColor) => {
+  const save = (value, effect = animation, config = character, highlight = color, foreground = textColor, bubbleConfig = bubble) => {
     setValue(value);
     if (composing.current) return;
     written.current = value.trim().slice(0, NOTE_LIMIT);
-    onSave(value, target.current || createNoteTarget(node, { capture: false }), effect, config, highlight, foreground);
+    onSave(value, target.current || createNoteTarget(node, { capture: false }), effect, config, highlight, foreground, bubbleConfig);
+  };
+  const changeBubble = patch => {
+    const config = JSON.stringify(animations.normalizeBubble({ ...bubbleAppearance, ...patch }));
+    setBubble(config); save(value, animation, character, color, textColor, config);
   };
   const changeCharacter = patch => {
     uploadVersion.current++; setUploading(false); setImageError("");
@@ -118,7 +126,7 @@ export function NotesPanel({ node, revision, onSave, onMarkerModeChange, t, noti
       if (version !== uploadVersion.current || selected !== target.current || !selected?.node?.isConnected) return;
       // Read the current note: typing during image decoding must never restore old text.
       const config = JSON.stringify(animations.normalizeCharacter({ ...appearance, id: "custom", image }));
-      setCharacter(config); onSave(selected.read(), selected, "companion", config, selected.color, selected.textColor);
+      setCharacter(config); onSave(selected.read(), selected, "companion", config, selected.color, selected.textColor, selected.bubble);
     } catch {
       if (version === uploadVersion.current) setImageError(t("图片无法读取，请选择 2 MB 以内的 PNG、WebP 或 JPG。"));
     } finally { if (version === uploadVersion.current) setUploading(false); }
@@ -145,6 +153,17 @@ export function NotesPanel({ node, revision, onSave, onMarkerModeChange, t, noti
         "--background": "0 0% 100%", "--foreground": "195 17% 12%", "--input": "195 14% 89%",
         "--muted-foreground": "193 8% 42%", "--accent": "164 38% 95%", "--accent-foreground": "173 88% 26%" }}
       onKeyDown={event => { event.stopPropagation(); if (event.key === "Escape") { event.preventDefault(); close(); } }}>
+      {node && <div className="flex shrink-0 items-center gap-1 border-b border-border bg-card px-3 py-2" data-note-actions="">
+        <TooltipProvider delayDuration={250}>
+          <Tooltip><TooltipTrigger asChild><span className="inline-flex">
+            <Button size="icon" variant="ghost" className="h-8 w-8" aria-label={t("预览效果")} disabled={disabled || !saved || uploading} onClick={preview}><Play aria-hidden="true" className="h-4 w-4" /></Button>
+          </span></TooltipTrigger><TooltipContent>{t("预览效果")}</TooltipContent></Tooltip>
+          <Tooltip><TooltipTrigger asChild><span className="inline-flex">
+            <Button size="icon" variant="ghost" className="h-8 w-8" aria-label={t("删除批注")} disabled={disabled || !saved} onClick={() => { save(""); close(); }}><Trash2 aria-hidden="true" className="h-4 w-4" /></Button>
+          </span></TooltipTrigger><TooltipContent>{t("删除批注")}</TooltipContent></Tooltip>
+        </TooltipProvider>
+        <span className="ml-auto text-xs text-muted-foreground">{value.length} / {NOTE_LIMIT}</span>
+      </div>}
       <div className="grid min-h-0 gap-2 overflow-auto p-3">
         {!node ? <p className="text-sm text-muted-foreground">{t("选择页面中的内容以添加批注。")}</p> : <>
           <p className="truncate text-xs text-slate-500">{contextText}</p>
@@ -168,12 +187,12 @@ export function NotesPanel({ node, revision, onSave, onMarkerModeChange, t, noti
               {NOTE_ANIMATIONS.filter(effect => allowCharacters || effect.id !== "companion").map(effect => <SelectItem key={effect.id} value={effect.id}>{t(effect.label.zh)}</SelectItem>)}
             </SelectContent>
           </Select>
-          {animation === "companion" && <Disclosure title={t("角色形象")} icon={Smile} defaultOpen={docked}>
+          {animation === "companion" && <Disclosure title={t("角色形象")} defaultOpen={docked}>
             {notice && <p className="text-xs text-muted-foreground">{t("角色形象仅高级导出支持 · 1 Credit")}</p>}
             <Label htmlFor={id + "-character"}>{t("角色形象")}</Label>
             <div className="flex items-center gap-3">
               <img src={animations.characterImage(character)} alt="" className="h-10 w-10 shrink-0" />
-              <Select value={appearance.id} disabled={disabled} onValueChange={id => changeCharacter({ id })}>
+              <Select value={appearance.id} disabled={disabled} onValueChange={id => changeCharacter(animations.selectCharacter(character, id))}>
                 <SelectTrigger id={id + "-character"}><SelectValue /></SelectTrigger>
                 <SelectContent container={panel}>
                   {animations.characters.map(item => <SelectItem key={item.id} value={item.id}>{t(item.label.zh)}</SelectItem>)}
@@ -191,7 +210,20 @@ export function NotesPanel({ node, revision, onSave, onMarkerModeChange, t, noti
             {imageError && <p role="alert" className="text-xs text-red-600">{imageError}</p>}
             <p className="text-xs text-muted-foreground">{t("随机跳跃、滚动或滑行，停稳后在角色旁显示文字。")}</p>
           </Disclosure>}
-          <Disclosure title={t("更多设置")} icon={Settings2} defaultOpen={docked}>
+          <Disclosure title={t("批注气泡")} defaultOpen={docked}>
+            <ColorPalette compact customLabel={t("自定义颜色")} value={bubbleAppearance.background} label={t("气泡背景颜色")} disabled={disabled}
+              onChange={background => changeBubble({ background })} />
+            <ColorPalette compact customLabel={t("自定义颜色")} value={bubbleAppearance.color} label={t("气泡字体颜色")} disabled={disabled}
+              onChange={color => changeBubble({ color })} />
+            <Label htmlFor={id + "-bubble-shape"}>{t("气泡形状")}</Label>
+            <Select value={bubbleAppearance.shape} disabled={disabled} onValueChange={shape => changeBubble({ shape })}>
+              <SelectTrigger id={id + "-bubble-shape"}><SelectValue /></SelectTrigger>
+              <SelectContent container={panel}>
+                {animations.bubbleShapes.map(shape => <SelectItem key={shape.id} value={shape.id}>{t(shape.label.zh)}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </Disclosure>
+          <Disclosure title={t("更多设置")} defaultOpen={docked}>
           <Label htmlFor={id + "-markers"}>{t("批注标记（整个文档）")}</Label>
           <Select value={markerMode} disabled={disabled} onValueChange={mode => { setMarkerMode(mode); onMarkerModeChange?.(mode, node?.ownerDocument); }}>
             <SelectTrigger id={id + "-markers"}><SelectValue /></SelectTrigger>
@@ -202,11 +234,7 @@ export function NotesPanel({ node, revision, onSave, onMarkerModeChange, t, noti
           <p className="text-xs text-muted-foreground">{t("自动：演示稿预览和播放时隐藏序号，普通文档显示。高亮背景始终保留。")}</p>
           {notice && <p className="text-xs text-muted-foreground">{notice}</p>}
           </Disclosure>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm" variant="outline" disabled={disabled || !saved || uploading} onClick={preview}><Play aria-hidden="true" className="h-3.5 w-3.5" />{t("预览效果")}</Button>
-            <Button size="sm" variant="outline" disabled={disabled || !saved} onClick={() => { save(""); close(); }}><Trash2 aria-hidden="true" className="h-3.5 w-3.5" />{t("删除批注")}</Button>
-            <span className="text-xs text-muted-foreground">{value.length} / {NOTE_LIMIT}</span>
-          </div>
+
         </>}
       </div>
     </section>, docked ? dockedContainer : trigger.current.ownerDocument.body)}

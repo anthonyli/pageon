@@ -58,3 +58,14 @@ or network requests are needed after exporting. Preview uses the document's
 `pageon:note-preview` event with `detail.node`.
 
 Preset color choices are provided by the shared `@pageon/ui/color-palette` component, independently of the animation player.
+
+### Note bubble appearance
+
+`bubbleShapes`, `normalizeBubble(raw)` and `applyBubble(element, raw)` are shared
+by plain and character notes, including standard offline exports. The optional
+`data-pageon-note-bubble` JSON value has `{ background, color, shape }`; element
+patches use `noteBubble`. Background and text accept six-digit hex colors or eight-digit hex colors with alpha.
+Shapes are `rounded`, `square`, `soft` and `speech`. Missing or invalid values
+fall back to a white background, dark text and rounded corners. Bubble settings
+are independent of the selected-text highlight, selected-text color and avatar
+color. Saved settings survive editing, copying, undo/redo and HTML export.

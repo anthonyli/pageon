@@ -12,7 +12,14 @@ export function createDeckEditSession(doc) {
         if (!groups.has(parent)) groups.set(parent, []);
         groups.get(parent).push(slide);
       });
-      const decks = [...groups.entries()].filter(([, slides]) => slides.length > 1);
+      const decks = [...groups.entries()].filter(([, slides]) => slides.length > 1 && !slides.every(slide => {
+        const style = win.getComputedStyle(slide);
+        // A scrolling document already exposes its pages. Expanding it again
+        // replaces per-page geometry with the height of the entire document.
+        return ['static', 'relative'].includes(style.position) && style.display !== 'none' &&
+          style.visibility !== 'hidden' && style.opacity !== '0' &&
+          !slide.hidden && !slide.closest('[inert],[aria-hidden="true"]');
+      }));
       if (!decks.length) return;
       // Capture the currently visible page before all pages become visible.
       // Use rendered visibility, not template-specific active class names.
@@ -43,16 +50,33 @@ export function createDeckEditSession(doc) {
         Object.entries(styles).forEach(([key, value]) => element.style.setProperty(key, value, 'important'));
       };
       // Measure before changing any layout; preserve each deck's original page height.
-      const heights = decks.map(([parent]) => Math.max(parent.clientHeight || win.innerHeight, 1));
+      const geometry = decks.map(([parent, slides]) => {
+        const styles = slides.map(slide => win.getComputedStyle(slide));
+        const fallbackDisplay = styles.find(style => style.display !== 'none')?.display || 'block';
+        return slides.map((slide, index) => {
+          const style = styles[index];
+          const cssHeight = parseFloat(style.height);
+          const extra = style.boxSizing === 'border-box' ? 0 :
+            ['paddingTop', 'paddingBottom', 'borderTopWidth', 'borderBottomWidth']
+              .reduce((sum, key) => sum + (parseFloat(style[key]) || 0), 0);
+          return {
+            // offsetHeight is untransformed; getBoundingClientRect may include
+            // presentation scaling, which must not become the new layout size.
+            height: slide.offsetHeight || (Number.isFinite(cssHeight) && cssHeight > 0 ? cssHeight + extra : 0) ||
+              Math.max(1, Math.min(parent.clientHeight || win.innerHeight, win.innerHeight)),
+            display: style.display !== 'none' ? style.display : fallbackDisplay,
+          };
+        });
+      });
       decks.forEach(([parent, slides], index) => {
-        const display = slides.map((slide) => win.getComputedStyle(slide).display).find((value) => value !== 'none') || 'block';
         for (let ancestor = parent; ancestor; ancestor = ancestor.parentElement) {
           patch(ancestor, { height: 'auto', 'max-height': 'none', overflow: 'visible', 'overflow-y': 'visible', transform: 'none' });
           if (ancestor !== doc.body && ancestor !== doc.documentElement) {
             patch(ancestor, { position: 'relative', inset: 'auto', display: 'block' });
           }
         }
-        slides.forEach((slide) => {
+        slides.forEach((slide, slideIndex) => {
+          const { height, display } = geometry[index][slideIndex];
           // Presentation scripts make inactive slides inert. CSS visibility and
           // pointer-events cannot override that: clicks hit the deck instead.
           interactionSnapshots.set(slide, [slide.getAttribute('inert'), slide.getAttribute('aria-hidden')]);
@@ -60,7 +84,7 @@ export function createDeckEditSession(doc) {
           patch(slide, {
             position: 'relative', inset: 'auto', display, opacity: '1', visibility: 'visible',
             transform: 'none', transition: 'none', animation: 'none', 'pointer-events': 'auto',
-            height: 'auto', 'min-height': heights[index] + 'px', 'max-height': 'none',
+            height: 'auto', 'min-height': height + 'px', 'max-height': 'none',
             width: '100%', 'max-width': 'none', 'box-sizing': 'border-box',
             'margin-bottom': '24px', 'content-visibility': 'visible',
           });

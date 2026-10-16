@@ -15,11 +15,11 @@ test('character assets are embedded, normalized and safe for untrusted HTML attr
     assert.equal(player.normalizeCharacter({ id: 'custom', image: raw }).image, '');
   }
   assert.equal(player.characterImage(config), image);
-  for (const id of ['dot', 'blob', 'spark', 'frog']) {
+  for (const { id, defaultColor } of player.characters) {
     const svg = decodeURIComponent(player.characterImage({ id, color: '"><script>alert(1)</script>' }));
-    assert.match(svg, /^data:image\/svg\+xml/); assert.doesNotMatch(svg, /<script/); assert.match(svg, /#4678ff/);
+    assert.match(svg, /^data:image\/svg\+xml/); assert.doesNotMatch(svg, /<script/); assert.ok(svg.includes(defaultColor));
   }
-  assert.deepEqual(player.characters[0], { id: 'dot', label: { zh: '圆圈', en: 'Circle' } });
+  assert.deepEqual(player.characters[0], { id: 'dot', defaultColor: '#4678ff', label: { zh: '圆圈', en: 'Circle' } });
   const ring = decodeURIComponent(player.characterImage({ id: 'dot' }));
   assert.match(ring, /fill-rule="evenodd"/);
   assert.doesNotMatch(ring, /#172126/);

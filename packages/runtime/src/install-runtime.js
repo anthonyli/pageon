@@ -199,8 +199,8 @@ const notesForm=createOfflineNoteForm({document,paletteFactory:createColorPalett
   if(!['auto','always','edit'].includes(mode))return;
   document.documentElement.setAttribute('data-pageon-note-markers',mode);
   notes?.refresh();emit('change',getSelection());
-},onChange(node,value,target,animation,character,color,textColor){
-  if(!target.write(value,animation,character,color,textColor))return;
+},onChange(node,value,target,animation,character,color,textColor,bubble){
+  if(!target.write(value,animation,character,color,textColor,bubble))return;
   notes?.refresh();
   emit('change',getSelection());
 }});

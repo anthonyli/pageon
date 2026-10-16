@@ -419,8 +419,8 @@ export default function Editor({
                 setNoteRevision(revision => revision + 1);
                 publishDraft();
                 notesRef.current?.refresh();
-              }} onSave={(value, target, animation, character, color, textColor) => {
-                if (!recordNoteTarget(diffRef.current, target, value, animation, character, color, textColor)) return;
+              }} onSave={(value, target, animation, character, color, textColor, bubble) => {
+                if (!recordNoteTarget(diffRef.current, target, value, animation, character, color, textColor, bubble)) return;
                 setChangeCount(diffRef.current.size);
                 setNoteRevision(revision => revision + 1);
                 publishDraft();

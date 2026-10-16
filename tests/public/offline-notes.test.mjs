@@ -344,3 +344,32 @@ test('standard offline document marker preference survives save and reopen witho
     assert.equal(reopened.doc.querySelector('pageon-notes').shadowRoot.querySelector('button').hidden, false);
   } finally { f.close(); reopened?.close(); }
 });
+
+test('standard offline notes configure bubbles without characters and retain them after save/reopen', () => {
+  const f = open(); let reopened;
+  try {
+    f.edit(f.doc.querySelector('h1'), 'Plain note');
+    f.click(f.shadow.querySelector('button[aria-label="Bubble background color #02bb9f"]'));
+    f.click(f.shadow.querySelector('button[aria-label="Bubble text color #a25aff"]'));
+    for (const [label, percent] of [['Bubble background color', '50'], ['Bubble text color', '25']]) {
+      const opacity = f.shadow.querySelector(`[aria-label="${label} opacity percent"]`);
+      opacity.value = percent; opacity.dispatchEvent(new f.win.Event('input', { bubbles: true }));
+    }
+    const shape = f.shadow.querySelector('#pageon-note-bubble-shape');
+    shape.value = 'square'; shape.dispatchEvent(new f.win.Event('change', { bubbles: true }));
+    assert.equal(f.shadow.querySelector('#pageon-note-animation option[value=companion]'), null);
+    reopened = open(f.runtime.serialize().html);
+    assert.deepEqual(reopened.errors, []);
+    const title = reopened.doc.querySelector('h1');
+    assert.deepEqual(JSON.parse(title.dataset.pageonNoteBubble), { background: '#02bb9f80', color: '#a25aff40', shape: 'square' });
+    reopened.edit(title, 'Still plain');
+    assert.equal(reopened.shadow.querySelector('#pageon-note-bubble-shape').value, 'square');
+    reopened.click(reopened.shadow.querySelector('.note-preview'));
+    const tip = reopened.doc.querySelector('pageon-notes').shadowRoot.querySelector('.tip');
+    assert.equal(tip.style.backgroundColor, 'rgba(2, 187, 159, 0.5)');
+    assert.equal(tip.style.color, 'rgba(162, 90, 255, 0.25)');
+    assert.equal(tip.style.borderRadius, '0px');
+    reopened.click(reopened.shadow.querySelector('.note-delete'));
+    assert.equal(title.hasAttribute('data-pageon-note-bubble'), false);
+  } finally { f.close(); reopened?.close(); }
+});

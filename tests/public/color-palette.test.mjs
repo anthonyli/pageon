@@ -63,3 +63,25 @@ test('compact shared palettes expand one at a time and commit custom colors safe
     first.destroy(); second.destroy();
   } finally { dom.window.close(); }
 });
+
+test('shared picker preserves alpha through presets, HEX edits, transparent endpoints and serialization', () => {
+  const dom = new JSDOM('<body><div></div></body>');
+  try {
+    const changes = [], factory = new Function(`return (${createColorPalette.toString()})`)();
+    const control = factory(dom.window.document.querySelector('div'), { colors: DEFAULT_COLORS, compact: true, label: 'Bubble', value: '#12345680', onChange: value => changes.push(value) });
+    const alpha = control.root.querySelector('input[type=range]'), percent = control.root.querySelector('input[type=number]');
+    assert.equal(percent.value, '50');
+    control.root.querySelector('[aria-label="Bubble #02bb9f"]').click(); assert.equal(changes.at(-1), '#02bb9f80');
+    const hex = control.root.querySelector('.palette-hex'); hex.value = '#abcdef'; hex.dispatchEvent(new dom.window.Event('change'));
+    assert.equal(changes.at(-1), '#abcdef80');
+    percent.value = '0'; percent.dispatchEvent(new dom.window.Event('input')); assert.equal(changes.at(-1), '#abcdef00');
+    assert.equal(alpha.value, '0');
+    percent.value = ''; percent.dispatchEvent(new dom.window.Event('change')); assert.equal(percent.value, '0');
+    percent.value = '101'; percent.dispatchEvent(new dom.window.Event('change')); assert.equal(percent.value, '0');
+    alpha.value = '100'; alpha.dispatchEvent(new dom.window.Event('input')); assert.equal(changes.at(-1), '#abcdef');
+    hex.value = '#12345640'; hex.dispatchEvent(new dom.window.Event('change')); assert.equal(percent.value, '25');
+    control.update({ disabled: true }); percent.value = '75'; percent.dispatchEvent(new dom.window.Event('input'));
+    assert.equal(changes.at(-1), '#12345640');
+    control.destroy();
+  } finally { dom.window.close(); }
+});

@@ -95,7 +95,7 @@ export function createOfflineNoteForm({ document, lang, onChange, onMarkerModeCh
   const changeCharacter = patch => {
     invalidateUpload(); character = JSON.stringify(animations.normalizeCharacter({ ...animations.normalizeCharacter(character), ...patch })); renderCharacter(); change();
   };
-  characterSelect.addEventListener('change', () => changeCharacter({ id: characterSelect.value }));
+  characterSelect.addEventListener('change', () => changeCharacter(animations.selectCharacter(character, characterSelect.value)));
   file.addEventListener('change', async () => {
     if (!file.files?.[0]) return;
     const version = ++uploadVersion, currentTarget = target;
@@ -108,6 +108,30 @@ export function createOfflineNoteForm({ document, lang, onChange, onMarkerModeCh
     } catch { if (version === uploadVersion) error.textContent = zh ? '图片无法读取，请选择 2 MB 以内的 PNG、WebP 或 JPG。' : 'Could not read the image. Choose a PNG, WebP or JPG under 2 MB.'; }
     finally { if (version === uploadVersion) { file.disabled = false; file.value = ''; } }
   });
+  let bubble = '';
+  const bubbleDetails = document.createElement('details');
+  const bubbleSummary = document.createElement('summary'); bubbleSummary.textContent = zh ? '批注气泡' : 'Note bubble';
+  const bubbleBackground = document.createElement('div'), bubbleForeground = document.createElement('div');
+  const bubbleBackgroundPalette = paletteFactory(bubbleBackground, { compact: true, customLabel: zh ? '自定义颜色' : 'Custom color', colors: paletteColors,
+    label: zh ? '气泡背景颜色' : 'Bubble background color', onChange: background => changeBubble({ background }) });
+  const bubbleForegroundPalette = paletteFactory(bubbleForeground, { compact: true, customLabel: zh ? '自定义颜色' : 'Custom color', colors: paletteColors,
+    label: zh ? '气泡字体颜色' : 'Bubble text color', onChange: color => changeBubble({ color }) });
+  const bubbleLabel = document.createElement('label'); bubbleLabel.htmlFor = 'pageon-note-bubble-shape'; bubbleLabel.textContent = zh ? '气泡形状' : 'Bubble shape';
+  const bubbleShape = document.createElement('select'); bubbleShape.id = bubbleLabel.htmlFor;
+  animations.bubbleShapes.forEach(shape => { const option = document.createElement('option'); option.value = shape.id; option.textContent = shape.label[zh ? 'zh' : 'en']; bubbleShape.append(option); });
+  const renderBubble = () => {
+    const config = animations.normalizeBubble(bubble);
+    bubbleBackgroundPalette.update({ value: config.background, disabled: !selected });
+    bubbleForegroundPalette.update({ value: config.color, disabled: !selected });
+    [...bubbleShape.options].forEach(option => { option.selected = false; });
+    [...bubbleShape.options].find(option => option.value === config.shape).selected = true;
+    bubbleShape.disabled = !selected;
+  };
+  const changeBubble = patch => {
+    bubble = JSON.stringify(animations.normalizeBubble({ ...animations.normalizeBubble(bubble), ...patch })); renderBubble(); change();
+  };
+  bubbleShape.addEventListener('change', () => changeBubble({ shape: bubbleShape.value }));
+  bubbleDetails.append(bubbleSummary, bubbleBackground, bubbleForeground, bubbleLabel, bubbleShape);
   const more = document.createElement('details'); const moreSummary = document.createElement('summary'); moreSummary.textContent = zh ? '更多设置' : 'More settings'; more.append(moreSummary);
   const markerLabel = document.createElement('label'); markerLabel.htmlFor = 'pageon-note-markers'; markerLabel.textContent = zh ? '批注标记（整个文档）' : 'Note markers (whole document)';
   const markerMode = document.createElement('select'); markerMode.id = markerLabel.htmlFor;
@@ -137,8 +161,9 @@ export function createOfflineNoteForm({ document, lang, onChange, onMarkerModeCh
     if (selected !== next) { hide(); target = createNoteTarget(next, { capture: false }); }
     const note = target?.read() || '';
     const effect = animations.normalize(target?.animation);
-    if (selected === next && lastNote === note && (!note || (lastAnimation === effect && character === (target?.character || '') && highlightColor === target?.color && textColor === target?.textColor))) return;
+    if (selected === next && lastNote === note && (!note || (lastAnimation === effect && character === (target?.character || '') && highlightColor === target?.color && textColor === target?.textColor && bubble === (target?.bubble || '')))) return;
     selected = next; lastNote = note; lastAnimation = effect;
+    bubble = target?.bubble || ''; renderBubble();
     character = target?.character || '';
     highlightColor = target?.color || '#ffcc39'; renderHighlight();
     textColor = target?.textColor || ''; renderForeground();
@@ -154,13 +179,13 @@ export function createOfflineNoteForm({ document, lang, onChange, onMarkerModeCh
     if (!selected?.isConnected) { select(null); return; }
     lastNote = input.value.trim().slice(0, 2000);
     lastAnimation = animation.value;
-    onChange(selected, input.value.slice(0, 2000), target, animation.value, character, highlightColor, textColor);
+    onChange(selected, input.value.slice(0, 2000), target, animation.value, character, highlightColor, textColor, bubble);
     remove.disabled = preview.disabled = !target?.read();
   };
   input.addEventListener('input', change);
   animation.addEventListener('change', () => { invalidateUpload(); renderCharacter(); change(); });
   remove.addEventListener('click', () => { input.value = ''; change(); dismiss(); });
-  for (const summary of [characterSummary, moreSummary]) {
+  for (const summary of [characterSummary, bubbleSummary, moreSummary]) {
     const chevron = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     chevron.setAttribute('viewBox', '0 0 24 24'); chevron.setAttribute('aria-hidden', 'true');
     chevron.innerHTML = '<path d="m6 9 6 6 6-6"/>'; summary.prepend(chevron);
@@ -168,10 +193,10 @@ export function createOfflineNoteForm({ document, lang, onChange, onMarkerModeCh
   style.textContent += '.note-form summary{display:flex;align-items:center;gap:8px;list-style:none;border-radius:6px;padding:6px}.note-form summary::-webkit-details-marker{display:none}.note-form summary svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;transform:rotate(-90deg)}.note-form details[open]>summary svg{transform:none}.note-form summary:focus-visible{outline:2px solid #159d89;outline-offset:-2px}';
   more.append(markerLabel, markerMode, markerHint, hint);
   const actions = document.createElement('div'); actions.className = 'note-actions'; actions.append(preview, remove);
-  body.append(label, context, input, highlight, foreground, animationLabel, animation, ...(animations.normalize('companion') === 'companion' ? [characterDetails] : []), more, actions);
+  body.append(label, context, input, highlight, foreground, animationLabel, animation, ...(animations.normalize('companion') === 'companion' ? [characterDetails] : []), bubbleDetails, more, actions);
   panel.append(style, body);
   let floating;
-  const hide = () => { invalidateUpload(); highlightPalette.collapse(); foregroundPalette.collapse(); characterPalette.collapse(); panel.hidden = true; onClose?.(); };
+  const hide = () => { invalidateUpload(); highlightPalette.collapse(); foregroundPalette.collapse(); characterPalette.collapse(); bubbleBackgroundPalette.collapse(); bubbleForegroundPalette.collapse(); panel.hidden = true; onClose?.(); };
   const dismiss = () => { hide(); anchor?.focus?.({ preventScroll: true }); };
   panel.addEventListener('keydown', event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); dismiss(); } });
   const cleanups = [];
@@ -188,6 +213,7 @@ export function createOfflineNoteForm({ document, lang, onChange, onMarkerModeCh
     if (!selected) return;
     target = createNoteTarget(selected, { capture });
     selectAnimation(animations.normalize(target.animation)); lastAnimation = animation.value;
+    bubble = target.bubble; renderBubble();
     character = target.character; renderCharacter();
     highlightColor = target.color; renderHighlight();
     textColor = target.textColor; renderForeground();
@@ -205,5 +231,5 @@ export function createOfflineNoteForm({ document, lang, onChange, onMarkerModeCh
     floating.refresh();
   };
   select(null);
-  return { panel, select, input, show, hide, close: dismiss, refresh: () => floating?.refresh(), destroy: () => { highlightPalette.destroy(); foregroundPalette.destroy(); characterPalette.destroy(); invalidateUpload(); floating?.destroy(); cleanups.forEach(fn => fn()); panel.remove(); } };
+  return { panel, select, input, show, hide, close: dismiss, refresh: () => floating?.refresh(), destroy: () => { highlightPalette.destroy(); foregroundPalette.destroy(); characterPalette.destroy(); bubbleBackgroundPalette.destroy(); bubbleForegroundPalette.destroy(); invalidateUpload(); floating?.destroy(); cleanups.forEach(fn => fn()); panel.remove(); } };
 }

@@ -3,10 +3,11 @@ import { createNoteAnimations, NOTE_ANIMATIONS } from "@pageon/note-animations";
 export const NOTE_ATTRIBUTE = "data-pageon-note";
 export const NOTE_ANIMATION_ATTRIBUTE = "data-pageon-note-animation";
 export const readNoteAnimation = node => node?.getAttribute(NOTE_ANIMATION_ATTRIBUTE) || "none";
+export const readNoteBubble = node => node?.getAttribute("data-pageon-note-bubble") || "";
 export const readNoteCharacter = node => node?.getAttribute("data-pageon-note-character") || "";
 export const readNoteColor = node => {
   const color = node?.getAttribute("data-pageon-note-color");
-  return /^#[0-9a-f]{6}$/i.test(color || "") ? color.toLowerCase() : "#ffcc39";
+  return /^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/i.test(color || "") ? color.toLowerCase() : "#ffcc39";
 };
 export const NOTE_MARKER_MODES = [
   { id: "auto", label: "自动" }, { id: "always", label: "始终显示" }, { id: "edit", label: "仅编辑时显示" },
@@ -40,6 +41,21 @@ export const NOTE_MESSAGES = {
   "始终显示": "Always show",
   "仅编辑时显示": "Show only while editing",
   "自动：演示稿预览和播放时隐藏序号，普通文档显示。高亮背景始终保留。": "Auto: hide numbers when previewing or presenting slides; show them in ordinary documents. Highlight backgrounds stay visible.",
+  "兔耳": "Bunny",
+  "酷酷爱心": "Cool heart",
+  "单片眼镜": "Monocle",
+  "酷酷菱形": "Cool diamond",
+  "眼镜小蓝": "Blue glasses",
+  "耳机兔": "Headphone bunny",
+  "思考": "Thinking",
+  "批注气泡": "Note bubble",
+  "气泡背景颜色": "Bubble background color",
+  "气泡字体颜色": "Bubble text color",
+  "气泡形状": "Bubble shape",
+  "圆角矩形": "Rounded rectangle",
+  "矩形": "Rectangle",
+  "大圆角": "Soft rounded",
+  "对话气泡": "Speech bubble",
   "软糖": "Jelly",
   "小星": "Spark",
   "小蛙": "Frog",
@@ -73,11 +89,13 @@ export function readNote(node) {
   return (node?.getAttribute(NOTE_ATTRIBUTE) || "").slice(0, NOTE_LIMIT);
 }
 
-export function setNote(node, text, animation = readNoteAnimation(node), character = readNoteCharacter(node), color = readNoteColor(node)) {
+export function setNote(node, text, animation = readNoteAnimation(node), character = readNoteCharacter(node), color = readNoteColor(node), bubble = readNoteBubble(node)) {
   const note = typeof text === "string" ? text.trim().slice(0, NOTE_LIMIT) : "";
+  if (note && typeof bubble === "string" && bubble.length <= 500 && bubble) node.setAttribute("data-pageon-note-bubble", bubble);
+  else node.removeAttribute("data-pageon-note-bubble");
   if (note && typeof character === "string" && character.length <= 190000 && character) node.setAttribute("data-pageon-note-character", character);
   else node.removeAttribute("data-pageon-note-character");
-  if (note && /^#[0-9a-f]{6}$/i.test(color || "")) node.setAttribute("data-pageon-note-color", color.toLowerCase());
+  if (note && /^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/i.test(color || "")) node.setAttribute("data-pageon-note-color", color.toLowerCase());
   else node.removeAttribute("data-pageon-note-color");
   if (note) node.setAttribute(NOTE_ATTRIBUTE, note);
   else node.removeAttribute(NOTE_ATTRIBUTE);
@@ -104,7 +122,7 @@ export function applyNoteEntries(doc, entries, findNode) {
     }
     if (typeof value?.note !== "string") continue;
     const node = findNode(doc, id);
-    if (node) setNote(node, value.note, value.noteAnimation ?? readNoteAnimation(node), value.noteCharacter ?? readNoteCharacter(node), value.noteColor ?? readNoteColor(node));
+    if (node) setNote(node, value.note, value.noteAnimation ?? readNoteAnimation(node), value.noteCharacter ?? readNoteCharacter(node), value.noteColor ?? readNoteColor(node), value.noteBubble ?? readNoteBubble(node));
   }
 }
 
@@ -220,6 +238,7 @@ export function installNotes(doc, win, { onSelect, lang, noteCharacters = true }
       animations.play(tip, node.getAttribute("data-pageon-note-animation"));
       timer = win.setTimeout(hide, 2000);
     }
+    animations.applyBubble(tip, node.getAttribute("data-pageon-note-bubble"));
   };
   const refresh = () => {
     if (destroyed || !doc.body) return;
@@ -243,7 +262,7 @@ export function installNotes(doc, win, { onSelect, lang, noteCharacters = true }
     // inherit each original parent's color, including mixed-color selections.
     for (const mark of doc.querySelectorAll('[data-pageon-note-range][data-pageon-note]')) {
       const value = mark.getAttribute('data-pageon-note-text-color');
-      const color = /^#[0-9a-f]{6}$/i.test(value || '') ? value : 'inherit';
+      const color = /^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/i.test(value || '') ? value : 'inherit';
       for (const property of ['color', '-webkit-text-fill-color']) {
         const expected = property === 'color' && color !== 'inherit'
           ? `rgb(${parseInt(color.slice(1, 3), 16)}, ${parseInt(color.slice(3, 5), 16)}, ${parseInt(color.slice(5, 7), 16)})` : color;
@@ -273,7 +292,7 @@ export function installNotes(doc, win, { onSelect, lang, noteCharacters = true }
         root.append(marker);
       }
       const color = node.getAttribute("data-pageon-note-color");
-      marker.style.backgroundColor = /^#[0-9a-f]{6}$/i.test(color || "") ? color : "#ffcc39";
+      marker.style.backgroundColor = /^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/i.test(color || "") ? color : "#ffcc39";
       marker.style.color = "#000";
       marker.textContent = String(index + 1);
       marker.setAttribute("aria-label", `${zh ? "批注" : "Note"} ${index + 1}`);
