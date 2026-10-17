@@ -29,7 +29,7 @@ test("notes persist with text edits, escape user content, delete cleanly, and in
     const entries = new Map([["1", "Changed title"]]);
     const note = 'Talk about <script>alert("x")</script> & the next topic';
     assert.equal(recordNote(entries, f.doc.querySelector("h1"), note), true);
-    assert.deepEqual(entries.get("1"), { html: "Changed title", note });
+    assert.deepEqual(entries.get("1"), { html: "Changed title", note, noteOrder: f.doc.querySelector("h1").dataset.pageonNoteOrder });
     const output = createExportHtml(source, [...entries]);
     const parsed = new DOMParser().parseFromString(output, "text/html");
     assert.equal(parsed.querySelector("h1").textContent, "Changed title");
@@ -75,11 +75,11 @@ test("Space shows one note per press, consumes all space phases, and delegates o
   } finally { f.close(); }
 });
 
-test("hiding after 2 seconds does not advance a page or reset note order", async () => {
+test("hiding after 3 seconds does not advance a page or reset note order", async () => {
   const f = fixture();
   try {
     f.press(); assert.equal(f.tip().hidden, false);
-    await new Promise(resolve => setTimeout(resolve, 2050));
+    await new Promise(resolve => setTimeout(resolve, 3050));
     assert.equal(f.tip().hidden, true);
     assert.equal(f.doc.querySelector(".slide.active h1").textContent, "Title");
     f.press(); assert.equal(f.tip().textContent, "Second");
@@ -224,5 +224,22 @@ test('legacy black annotation text inherits original colors while explicit text 
     const snapshot = f.doc.body.innerHTML;
     f.api.refresh();
     assert.equal(f.doc.body.innerHTML, snapshot, 'refresh does not keep rewriting styles');
+  } finally { f.close(); }
+});
+
+
+test('configured duration expires on schedule and persistent notes remain until replaced', () => {
+  const f = fixture();
+  const timers = new Map(); let id = 0;
+  f.win.setTimeout = (fn, delay) => { timers.set(++id, { fn, delay }); return id; };
+  f.win.clearTimeout = key => timers.delete(key);
+  try {
+    f.doc.querySelector('h1').setAttribute('data-pageon-note-bubble', JSON.stringify({ duration: 0 }));
+    f.doc.querySelector('p').setAttribute('data-pageon-note-bubble', JSON.stringify({ duration: 10 }));
+    f.press(); assert.equal(f.tip().textContent, 'First'); assert.equal(timers.size, 0);
+    f.api.refresh(); assert.equal(f.tip().hidden, false);
+    f.press(); assert.equal(f.tip().textContent, 'Second');
+    const timer = [...timers.values()].find(item => item.delay === 10000); assert.ok(timer);
+    timer.fn(); assert.equal(f.tip().hidden, true);
   } finally { f.close(); }
 });

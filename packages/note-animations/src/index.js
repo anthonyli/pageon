@@ -48,12 +48,17 @@ export function createNoteAnimations({ allowCharacters = true } = {}) {
     { id: 'soft', radius: '32px', label: { zh: '大圆角', en: 'Soft rounded' } },
     { id: 'speech', radius: '18px 18px 18px 4px', label: { zh: '对话气泡', en: 'Speech bubble' } },
   ];
+  const noteDurations = [
+    ...[1, 2, 3, 5, 10, 15, 30, 60].map(seconds => ({ id: seconds, label: { zh: `${seconds} 秒`, en: `${seconds} seconds` } })),
+    { id: 0, label: { zh: '持续显示，直到下一条批注', en: 'Keep until the next note' } },
+  ];
   const normalizeBubble = raw => {
     let value = raw;
     if (typeof raw === 'string') { try { value = raw.length <= 500 ? JSON.parse(raw) : null; } catch { value = null; } }
     const color = (value, fallback) => /^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/i.test(value || '') ? value.toLowerCase() : fallback;
     return { background: color(value?.background, '#ffffff'), color: color(value?.color, '#182022'),
-      shape: bubbleShapes.some(shape => shape.id === value?.shape) ? value.shape : 'rounded' };
+      shape: bubbleShapes.some(shape => shape.id === value?.shape) ? value.shape : 'rounded',
+      ...(value?.duration !== undefined ? { duration: noteDurations.some(item => item.id === value.duration) ? value.duration : 3 } : {}) };
   };
   const applyBubble = (element, raw) => {
     const bubble = normalizeBubble(raw);
@@ -268,7 +273,7 @@ export function createNoteAnimations({ allowCharacters = true } = {}) {
       cancel() { stopped = true; win.clearTimeout(fallback); motions.forEach(motion => motion.cancel()); actor.remove(); tip.style.cssText = ''; delete tip.dataset.characterSide; },
     };
   };
-  return { bubbleShapes, normalizeBubble, applyBubble, characters, normalizeCharacter, selectCharacter, characterImage, readImage, layout, present: allowCharacters ? present : undefined, get effects() { return [...registry.values()]; }, register, normalize, play, cancel };
+  return { noteDurations, bubbleShapes, normalizeBubble, applyBubble, characters, normalizeCharacter, selectCharacter, characterImage, readImage, layout, present: allowCharacters ? present : undefined, get effects() { return [...registry.values()]; }, register, normalize, play, cancel };
 }
 
 export const NOTE_ANIMATIONS = Object.freeze(createNoteAnimations().effects);

@@ -69,3 +69,12 @@ Shapes are `rounded`, `square`, `soft` and `speech`. Missing or invalid values
 fall back to a white background, dark text and rounded corners. Bubble settings
 are independent of the selected-text highlight, selected-text color and avatar
 color. Saved settings survive editing, copying, undo/redo and HTML export.
+
+Annotation creation order is persisted as `data-pageon-note-order` (`noteOrder`
+in element patches). Numbering and slide playback use this same order; edits
+retain it and deleting/recreating a note appends it. Legacy notes without order
+metadata retain document order because their original creation time is unknown.
+
+Bubble configuration also accepts `duration` in seconds (1, 2, 3, 5, 10, 15,
+30 or 60). Omitted values default to 3; 0 keeps the note visible until replaced
+or dismissed by navigation. For characters, the timer starts after arrival.

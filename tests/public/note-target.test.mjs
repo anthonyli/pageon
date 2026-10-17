@@ -93,3 +93,31 @@ test('text annotation stays inline even when the page styles heading spans as bl
     assert.equal(title.outerHTML, original);
   } finally { dom.window.close(); }
 });
+
+test('note markers and slide playback retain creation order across DOM order and serialization', () => {
+  const dom = new JSDOM('<html><body><section class="slide"><p data-artifact-edit="1">Above</p><p data-artifact-edit="2">Below</p></section><section class="slide" hidden>Next</section></body></html>', { pretendToBeVisual: true });
+  const doc = dom.window.document, [above, below] = doc.querySelectorAll('p'), entries = new Map();
+  try {
+    recordNoteTarget(entries, createNoteTarget(below), 'First');
+    const range = doc.createRange(); range.selectNodeContents(above); doc.getSelection().addRange(range);
+    recordNoteTarget(entries, createNoteTarget(above), 'Second'); doc.getSelection().removeAllRanges();
+    const firstOrder = below.dataset.pageonNoteOrder;
+    recordNoteTarget(entries, createNoteTarget(below), 'First updated', 'fade');
+    assert.equal(below.dataset.pageonNoteOrder, firstOrder);
+    assert.ok(Number(above.querySelector('span').dataset.pageonNoteOrder) > Number(firstOrder));
+    const reopened = new JSDOM(dom.serialize(), { pretendToBeVisual: true });
+    try {
+      reopened.window.HTMLElement.prototype.getBoundingClientRect = () => ({ left: 0, top: 0, right: 200, bottom: 100, width: 200, height: 100 });
+      installNotes(reopened.window.document, reopened.window);
+      const layer = reopened.window.document.querySelector('pageon-notes').shadowRoot;
+      layer.querySelector('button').click();
+      assert.equal(layer.querySelector('[role=status]').textContent, 'First updated');
+      const space = () => {
+        reopened.window.document.body.dispatchEvent(new reopened.window.KeyboardEvent('keydown', { key: ' ', code: 'Space', bubbles: true }));
+        reopened.window.document.body.dispatchEvent(new reopened.window.KeyboardEvent('keyup', { key: ' ', code: 'Space', bubbles: true }));
+      };
+      space(); assert.equal(layer.querySelector('[role=status]').textContent, 'First updated');
+      space(); assert.equal(layer.querySelector('[role=status]').textContent, 'Second');
+    } finally { reopened.window.close(); }
+  } finally { dom.window.close(); }
+});

@@ -56,7 +56,7 @@ export function createColorPalette(host, { colors = DEFAULT_COLORS, label, value
     // Only one palette is expanded in an annotation panel.
     root.getRootNode().querySelectorAll('.pageon-color-palette.is-compact .palette-trigger[aria-expanded=true]').forEach(button => { if (button !== trigger) button.click(); });
     if (!open) { collapse(); return; }
-    onOpen?.(); options.hidden = false; options.showPopover?.(); trigger.setAttribute('aria-expanded', 'true'); position();
+    bindOutside(); onOpen?.(); options.hidden = false; options.showPopover?.(); trigger.setAttribute('aria-expanded', 'true'); position();
   });
   trigger.setAttribute('aria-expanded', 'false');
   const validColor = value => /^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/i.test(value || '');
@@ -101,12 +101,22 @@ export function createColorPalette(host, { colors = DEFAULT_COLORS, label, value
   opacity.addEventListener('blur', () => update(current));
   opacity.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); commitOpacity(); update(current); } });
   const listen = (target, type, handler, capture = false) => { target.addEventListener(type, handler, capture); cleanups.push(() => target.removeEventListener(type, handler, capture)); };
-  if (compact) {
+  const outsideScopes = new Set();
+  // Forms construct palettes before mounting into a closed shadow root.
+  // Resolve event boundaries when opening, once the actual host is known.
+  const bindOutside = () => {
     for (let boundary = root; boundary;) {
-      const scope = boundary.getRootNode() === boundary ? doc : boundary.getRootNode(), visibleHost = boundary;
-      listen(scope, 'pointerdown', event => { if (!event.composedPath().includes(visibleHost)) collapse(); }, true);
+      const scope = boundary.getRootNode();
+      if (!scope.addEventListener || scope === boundary) break;
+      if (!outsideScopes.has(scope)) {
+        outsideScopes.add(scope);
+        const visibleHost = boundary;
+        listen(scope, 'pointerdown', event => { if (!event.composedPath().includes(visibleHost)) collapse(); }, true);
+      }
       boundary = scope.host;
     }
+  };
+  if (compact) {
     listen(win, 'resize', position);
     listen(doc, 'scroll', position, true);
   }

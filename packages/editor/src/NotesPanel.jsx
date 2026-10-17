@@ -211,6 +211,13 @@ export function NotesPanel({ node, revision, onSave, onMarkerModeChange, t, noti
             <p className="text-xs text-muted-foreground">{t("随机跳跃、滚动或滑行，停稳后在角色旁显示文字。")}</p>
           </Disclosure>}
           <Disclosure title={t("批注气泡")} defaultOpen={docked}>
+            <Label htmlFor={id + "-duration"}>{t("显示时长")}</Label>
+            <Select value={String(bubbleAppearance.duration ?? 3)} disabled={disabled} onValueChange={duration => changeBubble({ duration: Number(duration) })}>
+              <SelectTrigger id={id + "-duration"}><SelectValue /></SelectTrigger>
+              <SelectContent container={panel}>
+                {animations.noteDurations.map(item => <SelectItem key={item.id} value={String(item.id)}>{t(item.label.zh)}</SelectItem>)}
+              </SelectContent>
+            </Select>
             <ColorPalette compact customLabel={t("自定义颜色")} value={bubbleAppearance.background} label={t("气泡背景颜色")} disabled={disabled}
               onChange={background => changeBubble({ background })} />
             <ColorPalette compact customLabel={t("自定义颜色")} value={bubbleAppearance.color} label={t("气泡字体颜色")} disabled={disabled}

@@ -119,19 +119,25 @@ export function createOfflineNoteForm({ document, lang, onChange, onMarkerModeCh
   const bubbleLabel = document.createElement('label'); bubbleLabel.htmlFor = 'pageon-note-bubble-shape'; bubbleLabel.textContent = zh ? '气泡形状' : 'Bubble shape';
   const bubbleShape = document.createElement('select'); bubbleShape.id = bubbleLabel.htmlFor;
   animations.bubbleShapes.forEach(shape => { const option = document.createElement('option'); option.value = shape.id; option.textContent = shape.label[zh ? 'zh' : 'en']; bubbleShape.append(option); });
+  const durationLabel = document.createElement('label'); durationLabel.htmlFor = 'pageon-note-duration'; durationLabel.textContent = zh ? '显示时长' : 'Display duration';
+  const duration = document.createElement('select'); duration.id = durationLabel.htmlFor;
+  animations.noteDurations.forEach(item => { const option = document.createElement('option'); option.value = String(item.id); option.textContent = item.label[zh ? 'zh' : 'en']; duration.append(option); });
+  duration.addEventListener('change', () => changeBubble({ duration: Number(duration.value) }));
   const renderBubble = () => {
     const config = animations.normalizeBubble(bubble);
     bubbleBackgroundPalette.update({ value: config.background, disabled: !selected });
     bubbleForegroundPalette.update({ value: config.color, disabled: !selected });
     [...bubbleShape.options].forEach(option => { option.selected = false; });
     [...bubbleShape.options].find(option => option.value === config.shape).selected = true;
-    bubbleShape.disabled = !selected;
+    bubbleShape.disabled = duration.disabled = !selected;
+    [...duration.options].forEach(option => { option.selected = false; });
+    [...duration.options].find(option => option.value === String(config.duration ?? 3)).selected = true;
   };
   const changeBubble = patch => {
     bubble = JSON.stringify(animations.normalizeBubble({ ...animations.normalizeBubble(bubble), ...patch })); renderBubble(); change();
   };
   bubbleShape.addEventListener('change', () => changeBubble({ shape: bubbleShape.value }));
-  bubbleDetails.append(bubbleSummary, bubbleBackground, bubbleForeground, bubbleLabel, bubbleShape);
+  bubbleDetails.append(bubbleSummary, durationLabel, duration, bubbleBackground, bubbleForeground, bubbleLabel, bubbleShape);
   const more = document.createElement('details'); const moreSummary = document.createElement('summary'); moreSummary.textContent = zh ? '更多设置' : 'More settings'; more.append(moreSummary);
   const markerLabel = document.createElement('label'); markerLabel.htmlFor = 'pageon-note-markers'; markerLabel.textContent = zh ? '批注标记（整个文档）' : 'Note markers (whole document)';
   const markerMode = document.createElement('select'); markerMode.id = markerLabel.htmlFor;

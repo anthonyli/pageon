@@ -48,7 +48,13 @@ export function createNoteTarget(node, { capture = true } = {}) {
       const note = String(value || '').trim().slice(0, 2000);
       animation = typeof animation === "string" && /^[a-z][a-z0-9-]{0,63}$/.test(animation) ? animation : "none";
       character = typeof character === "string" && character.length <= 190000 ? character : "";
+      const orderAttribute = 'data-pageon-note-order';
+      const existingOrder = !segments.length && api.read() ? Number(api.node?.getAttribute(orderAttribute)) : null;
+      const order = existingOrder !== null && Number.isSafeInteger(existingOrder) && existingOrder >= 0 ? existingOrder : [...doc.querySelectorAll(`[${orderAttribute}]`)]
+        .reduce((next, item) => Math.max(next, (Number(item.getAttribute(orderAttribute)) || 0) + 1), Date.now());
       const writeAnimation = node => {
+        if (note) node.setAttribute(orderAttribute, String(order));
+        else node.removeAttribute(orderAttribute);
         if (note && bubble) node.setAttribute("data-pageon-note-bubble", bubble);
         else node.removeAttribute("data-pageon-note-bubble");
         if (note) node.setAttribute("data-pageon-note-color", color);
@@ -134,7 +140,7 @@ export function recordNoteTarget(entries, target, value, animation, character, c
     if (!id) continue;
     const previous = entries.get(id);
     const entry = typeof previous === 'string' ? { html: previous } : previous;
-    const patch = result.inline ? { html: node.innerHTML } : { note: node.getAttribute('data-pageon-note') || '' };
+    const patch = result.inline ? { html: node.innerHTML } : { note: node.getAttribute('data-pageon-note') || '', noteOrder: node.getAttribute('data-pageon-note-order') || '' };
     if (!result.inline && (previousAnimation !== 'none' || node.hasAttribute('data-pageon-note-animation') || entry?.noteAnimation)) {
       patch.noteAnimation = target.animation;
     }

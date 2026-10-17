@@ -64,7 +64,7 @@ test('random movement stays inside viewport and reading time begins only after l
   try {
     f.preview(); const tip = f.root.querySelector('.tip'), actor = f.root.querySelector('.note-character');
     assert.ok(actor); assert.equal(tip.style.visibility, 'hidden');
-    assert.ok(![...f.timers.values()].some(t => t.delay === 2000));
+    assert.ok(![...f.timers.values()].some(t => t.delay === 3000));
     for (const frame of f.calls[0].frames) {
       const [dx, dy] = frame.transform.match(/-?[\d.]+/g).map(Number);
       const x = parseFloat(actor.style.left) + dx, y = parseFloat(actor.style.top) + dy;
@@ -72,7 +72,7 @@ test('random movement stays inside viewport and reading time begins only after l
     }
     f.calls[0].finish(); await Promise.resolve();
     assert.equal(tip.style.visibility, ''); assert.equal(tip.textContent, 'Hello');
-    const timer = [...f.timers.values()].find(t => t.delay === 2000); assert.ok(timer); timer.fn();
+    const timer = [...f.timers.values()].find(t => t.delay === 3000); assert.ok(timer); timer.fn();
     assert.equal(tip.hidden, true); assert.equal(f.root.querySelector('.note-character'), null);
   } finally { f.close(); }
 });
@@ -120,7 +120,7 @@ test('replacement, resize, blur, reduced motion and destroy never leave stale ch
     assert.equal(f.root.querySelector('.tip').style.visibility, 'hidden');
     f.win.dispatchEvent(new f.win.Event('resize')); await Promise.resolve();
     assert.equal(f.root.querySelector('.tip').style.visibility, '');
-    assert.equal([...f.timers.values()].filter(t => t.delay === 2000).length, 1);
+    assert.equal([...f.timers.values()].filter(t => t.delay === 3000).length, 1);
     f.win.dispatchEvent(new f.win.Event('blur')); assert.equal(f.root.querySelector('.note-character'), null); assert.equal(f.timers.size, 0);
     f.win.matchMedia = () => ({ matches: true }); const count = f.calls.length;
     f.preview(); assert.equal(f.calls.length, count); assert.equal(f.root.querySelector('.tip').style.visibility, '');

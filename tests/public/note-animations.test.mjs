@@ -53,7 +53,7 @@ test('element animation patches survive replay, none overrides original config, 
   try {
     const doc = dom.window.document, node = doc.querySelector('p'), target = createNoteTarget(node), entries = new Map();
     assert.equal(recordNoteTarget(entries, target, 'Text', 'none'), true);
-    assert.deepEqual(entries.get('1'), { note: 'Text', noteAnimation: 'none' });
+    assert.deepEqual(entries.get('1'), { note: 'Text', noteAnimation: 'none', noteOrder: node.dataset.pageonNoteOrder });
     node.setAttribute('data-pageon-note-animation', 'fly');
     applyNoteEntries(doc, entries, () => node);
     assert.equal(node.hasAttribute('data-pageon-note-animation'), false);

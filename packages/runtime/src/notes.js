@@ -49,6 +49,8 @@ export const NOTE_MESSAGES = {
   "耳机兔": "Headphone bunny",
   "思考": "Thinking",
   "批注气泡": "Note bubble",
+  "显示时长": "Display duration",
+  ...Object.fromEntries(createNoteAnimations().noteDurations.map(item => [item.label.zh, item.label.en])),
   "气泡背景颜色": "Bubble background color",
   "气泡字体颜色": "Bubble text color",
   "气泡形状": "Bubble shape",
@@ -72,11 +74,11 @@ export const NOTE_MESSAGES = {
 
   "出现方式": "Entrance animation",
   ...Object.fromEntries(NOTE_ANIMATIONS.map(effect => [effect.label.zh, effect.label.en])),
-  "点击标记查看；幻灯片按空格逐条显示，每条 2 秒。": "Click a marker to read. In slides, press Space for each note, shown for 2 seconds.",
+  "点击标记查看；幻灯片按空格逐条显示，默认每条 3 秒。": "Click a marker to read. In slides, press Space for each note, shown for 3 seconds by default.",
   "批注": "Notes",
   "批注内容": "Note text",
   "选择页面中的内容以添加批注。": "Select content in the page to add a note.",
-  "批注会随 HTML 保存；点击标记查看。幻灯片中按空格逐条显示，每条 2 秒。": "Notes are saved in the HTML. Click a marker to read one. In slides, press Space to show each note for 2 seconds.",
+  "批注会随 HTML 保存；点击标记查看。幻灯片中按空格逐条显示，默认每条 3 秒。": "Notes are saved in the HTML. Click a marker to read one. In slides, press Space to show each note for 3 seconds by default.",
   "保存批注": "Save note",
   "删除批注": "Delete note",
   "修改批注": "Edit note",
@@ -89,8 +91,14 @@ export function readNote(node) {
   return (node?.getAttribute(NOTE_ATTRIBUTE) || "").slice(0, NOTE_LIMIT);
 }
 
-export function setNote(node, text, animation = readNoteAnimation(node), character = readNoteCharacter(node), color = readNoteColor(node), bubble = readNoteBubble(node)) {
+export function setNote(node, text, animation = readNoteAnimation(node), character = readNoteCharacter(node), color = readNoteColor(node), bubble = readNoteBubble(node), order = node?.getAttribute("data-pageon-note-order")) {
   const note = typeof text === "string" ? text.trim().slice(0, NOTE_LIMIT) : "";
+  if (note) {
+    if (order == null && readNote(node)) order = 0; // Legacy notes keep their existing document order.
+    if (order == null || order === '' || !Number.isSafeInteger(Number(order)) || Number(order) < 0) order = [...node.ownerDocument.querySelectorAll('[data-pageon-note-order]')]
+      .reduce((next, item) => Math.max(next, (Number(item.getAttribute('data-pageon-note-order')) || 0) + 1), Date.now());
+    node.setAttribute('data-pageon-note-order', String(order));
+  } else node.removeAttribute('data-pageon-note-order');
   if (note && typeof bubble === "string" && bubble.length <= 500 && bubble) node.setAttribute("data-pageon-note-bubble", bubble);
   else node.removeAttribute("data-pageon-note-bubble");
   if (note && typeof character === "string" && character.length <= 190000 && character) node.setAttribute("data-pageon-note-character", character);
@@ -111,6 +119,7 @@ export function recordNote(entries, node, text) {
   const previous = entries.get(id);
   entries.set(id, { ...(typeof previous === "string" ? { html: previous } : previous), note });
   setNote(node, note);
+  entries.get(id).noteOrder = node.getAttribute('data-pageon-note-order') || '';
   return true;
 }
 
@@ -122,7 +131,7 @@ export function applyNoteEntries(doc, entries, findNode) {
     }
     if (typeof value?.note !== "string") continue;
     const node = findNode(doc, id);
-    if (node) setNote(node, value.note, value.noteAnimation ?? readNoteAnimation(node), value.noteCharacter ?? readNoteCharacter(node), value.noteColor ?? readNoteColor(node), value.noteBubble ?? readNoteBubble(node));
+    if (node) setNote(node, value.note, value.noteAnimation ?? readNoteAnimation(node), value.noteCharacter ?? readNoteCharacter(node), value.noteColor ?? readNoteColor(node), value.noteBubble ?? readNoteBubble(node), value.noteOrder ?? node.getAttribute("data-pageon-note-order"));
   }
 }
 
@@ -158,7 +167,7 @@ export function installNotes(doc, win, { onSelect, lang, noteCharacters = true }
   const text = node => (node?.getAttribute(attr) || "").trim().slice(0, 2000);
   const unique = items => {
     const seen = new Set();
-    return items.filter(node => { const group = node.getAttribute('data-pageon-note-range'); if (!group) return true; if (seen.has(group)) return false; seen.add(group); return true; });
+    return items.filter(node => { const group = node.getAttribute('data-pageon-note-range'); if (!group) return true; if (seen.has(group)) return false; seen.add(group); return true; }).sort((a, b) => (Number(a.getAttribute('data-pageon-note-order')) || 0) - (Number(b.getAttribute('data-pageon-note-order')) || 0));
   };
   const zh = (lang || doc.documentElement.lang || "en").startsWith("zh");
   const slideSelector = ".slide,[data-slide],.reveal .slides section";
@@ -231,12 +240,14 @@ export function installNotes(doc, win, { onSelect, lang, noteCharacters = true }
     if (!tip || !text(node)) return;
     tip.textContent = text(node);
     tip.hidden = false;
+    const duration = animations.normalizeBubble(node.getAttribute("data-pageon-note-bubble")).duration ?? 3;
+    const expire = () => { if (duration > 0) timer = win.setTimeout(hide, duration * 1000); };
     if (animations.present && node.getAttribute("data-pageon-note-animation") === "companion") {
       presenter = animations.present({ tip, root, node, character: node.getAttribute("data-pageon-note-character"),
-        onSettled: () => { timer = win.setTimeout(hide, 2000); } });
+        onSettled: expire });
     } else {
       animations.play(tip, node.getAttribute("data-pageon-note-animation"));
-      timer = win.setTimeout(hide, 2000);
+      expire();
     }
     animations.applyBubble(tip, node.getAttribute("data-pageon-note-bubble"));
   };
@@ -359,7 +370,7 @@ export function installNotes(doc, win, { onSelect, lang, noteCharacters = true }
     if (records.some(record => record.target !== host && !host?.contains(record.target))) schedule();
   });
   observer.observe(doc.documentElement, { subtree: true, childList: true, characterData: true, attributes: true,
-    attributeFilter: [attr, "data-pageon-note-text-color", "data-pageon-note-color", "data-pageon-note-markers", "class", "style", "hidden", "inert", "aria-hidden", "data-artifact-mode", "data-artifact-local-edit"] });
+    attributeFilter: [attr, "data-pageon-note-order", "data-pageon-note-text-color", "data-pageon-note-color", "data-pageon-note-markers", "class", "style", "hidden", "inert", "aria-hidden", "data-artifact-mode", "data-artifact-local-edit"] });
   refresh();
 
   const api = { refresh, setInputGuard(handler) { inputGuard = handler; }, destroy() {

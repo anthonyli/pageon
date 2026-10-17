@@ -373,3 +373,41 @@ test('standard offline notes configure bubbles without characters and retain the
     assert.equal(title.hasAttribute('data-pageon-note-bubble'), false);
   } finally { f.close(); reopened?.close(); }
 });
+
+
+test('standard exported palettes accept pointer selection and persist color and opacity', () => {
+  const f = open(); let reopened;
+  try {
+    f.edit(f.doc.querySelector('h1'), 'Cue');
+    for (const label of ['Note color', 'Bubble background color', 'Bubble text color']) {
+      const trigger = f.shadow.querySelector(`.palette-trigger[aria-label="${label}"]`);
+      if (trigger.closest('details')) trigger.closest('details').open = true;
+      f.click(trigger);
+      const palette = trigger.closest('.pageon-color-palette'), panel = palette.querySelector('.palette-options');
+      const hex = palette.querySelector('.palette-hex');
+      hex.dispatchEvent(new f.win.MouseEvent('pointerdown', { bubbles: true, composed: true }));
+      assert.equal(panel.hidden, false);
+      hex.value = '#12345680'; hex.dispatchEvent(new f.win.Event('change', { bubbles: true, composed: true }));
+    }
+    reopened = open(f.runtime.serialize().html);
+    const node = reopened.doc.querySelector('h1');
+    assert.equal(node.dataset.pageonNoteColor, '#12345680');
+    assert.equal(JSON.parse(node.dataset.pageonNoteBubble).background, '#12345680');
+    assert.equal(JSON.parse(node.dataset.pageonNoteBubble).color, '#12345680');
+    assert.deepEqual(f.errors, []); assert.deepEqual(reopened.errors, []);
+  } finally { f.close(); reopened?.close(); }
+});
+
+
+test('display duration defaults to three seconds and persistent setting survives export/reopen', () => {
+  const f = open(); let reopened;
+  try {
+    f.edit(f.doc.querySelector('h1'), 'Keep me');
+    const duration = f.shadow.querySelector('#pageon-note-duration'); assert.equal(duration.value, '3');
+    duration.value = '0'; duration.dispatchEvent(new f.win.Event('change', { bubbles: true, composed: true }));
+    reopened = open(f.runtime.serialize().html);
+    reopened.edit(reopened.doc.querySelector('h1'), 'Keep me');
+    assert.equal(reopened.shadow.querySelector('#pageon-note-duration').value, '0');
+    assert.equal(JSON.parse(reopened.doc.querySelector('h1').dataset.pageonNoteBubble).duration, 0);
+  } finally { f.close(); reopened?.close(); }
+});
